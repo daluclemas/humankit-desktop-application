@@ -2,15 +2,14 @@
   "name": "my-project",
   "version": "0.1.0",
   "private": true,
-  "packageManager": "pnpm@12.3.4",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "electron:dev": "concurrently -k \"pnpm dev\" \"wait-on http://localhost:3000 && electron .\"",
-    "desktop:build": "pnpm build && electron-builder",
-    "desktop:win": "pnpm build && electron-builder --win nsis",
-    "desktop:mac": "pnpm build && electron-builder --mac dmg"
+    "electron:dev": "concurrently -k \"npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "desktop:build": "npm run build && electron-builder",
+    "desktop:win": "npm run build && electron-builder --win nsis",
+    "desktop:mac": "npm run build && electron-builder --mac dmg"
   },
   "main": "dist-electron/main.js", 
   "build": { "appId": "com.humankit.app", "productName": "HumanKit", "files": ["out/**/*", "dist-electron/**/*", "package.json"], "win": { "target": ["nsis"] }, "mac": { "target": ["dmg"], "category": "public.app-category.healthcare-fitness" }, "directories": { "output": "release" } },

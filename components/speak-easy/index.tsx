@@ -97,6 +97,7 @@ export default function SpeakEasyCoach() {
   const [totalMs, setTotalMs] = useState(0);
 
   const video = useRef<HTMLVideoElement>(null);
+  const stream = useRef<MediaStream | null>(null);
   const provider = useRef<SignalProvider | null>(null);
   const t0 = useRef(0);
   const breath = useRef<Sample[]>([]);
@@ -122,11 +123,13 @@ export default function SpeakEasyCoach() {
         },
         onBreathingRateReceived: (v) => breath.current.push({ t: now(), v }),
         onPulseRateReceived: (v) => pulse.current.push({ t: now(), v }),
-        onStream: (stream) => {
-          setCameraOn(!!stream);
+        onStream: (s) => {
+          // Remember the stream. The <video> may not be on the page yet.
+          stream.current = s;
+          setCameraOn(!!s);
           if (video.current) {
-            video.current.srcObject = stream;
-            if (stream) video.current.play().catch(() => {});
+            video.current.srcObject = s;
+            if (s) video.current.play().catch(() => {});
           }
         },
         onHint: setHint,
@@ -135,6 +138,15 @@ export default function SpeakEasyCoach() {
     }
     return provider.current;
   }, []);
+
+  // The <video> only appears after the "generating" step, so connect the
+  // saved stream to it as soon as it shows up.
+  useEffect(() => {
+    const el = video.current;
+    if (!el || !stream.current) return;
+    if (el.srcObject !== stream.current) el.srcObject = stream.current;
+    el.play().catch(() => {});
+  }, [phase, cameraOn]);
 
   // Once a second: refresh the charts and timers.
   const running =

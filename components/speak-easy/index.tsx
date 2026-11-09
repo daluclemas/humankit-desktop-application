@@ -144,6 +144,8 @@ export default function SpeakEasyCoach() {
     phase === "processing" ||
     phase === "feedback";
   useEffect(() => {
+    // localStorage.removeItem("humankit-consent-v2");
+    // localStorage.removeItem("humankit-camera-consent");
     if (!running) return;
     const id = setInterval(() => {
       setElapsed(now());

@@ -1,10 +1,44 @@
-@import 'tailwindcss';
-@import 'tw-animate-css';
+@import "tailwindcss";
+@import "tw-animate-css";
 
-:root { --background:#f8f8fc; --foreground:#182033; --muted:#718096; --border:#e7e8f0; --purple:#6958d9; --lavender:#eeebff; --teal:#3bb9a8; --navy:#20283d; }
-* { box-sizing:border-box; border-color:var(--border); }
-html,body { min-height:100%; }
-body { margin:0; background:var(--background); color:var(--foreground); font-family:Arial, Helvetica, sans-serif; }
-button, a { transition:all .2s ease; }
-button:focus-visible, a:focus-visible { outline:3px solid #bbb2ff; outline-offset:2px; }
-::selection { background:#dcd6ff; color:#27204f; }
+:root {
+  --background: #f8f8fc;
+  --foreground: #182033;
+  --muted: #718096;
+  --border: #e7e8f0;
+  --purple: #6958d9;
+  --lavender: #eeebff;
+  --teal: #3bb9a8;
+  --navy: #20283d;
+}
+* {
+  box-sizing: border-box;
+  border-color: var(--border);
+}
+html,
+body {
+  min-height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+button,
+a {
+  transition: all 0.2s ease;
+}
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid #bbb2ff;
+  outline-offset: 2px;
+}
+::selection {
+  background: #dcd6ff;
+  color: #27204f;
+}
+
+button {
+  cursor: pointer;
+}

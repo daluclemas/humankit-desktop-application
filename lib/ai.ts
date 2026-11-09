@@ -3,7 +3,9 @@ import type { AnswerResult, Report, Review } from "@/types/coach";
 // The key is read from the .env.local file (see the setup steps).
 export const GROQ_API_KEY = process.env.NEXT_PUBLIC_GROQ_API_KEY ?? "";
 const BASE = "https://api.groq.com/openai/v1";
-const CHAT_MODEL = "llama-3.3-70b-versatile";
+// Model can be changed from .env.local without touching code.
+const CHAT_MODEL =
+  process.env.NEXT_PUBLIC_GROQ_CHAT_MODEL ?? "openai/gpt-oss-120b";
 const SPEECH_MODEL = "whisper-large-v3-turbo";
 
 export class AiError extends Error {

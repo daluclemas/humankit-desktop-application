@@ -4,55 +4,124 @@ import Link from "next/link";
 import {
   ArrowLeft,
   Camera,
+  Loader2,
   Mic,
-  Pause,
-  Play,
+  Sparkles,
   Square,
-  ShieldCheck,
+  Play,
+  ArrowRight,
+  RotateCcw,
 } from "lucide-react";
 import { createPresageProvider, friendlyError } from "@/lib/presage";
+import {
+  GROQ_API_KEY,
+  friendlyAiError,
+  generateQuestions,
+  reviewAnswer,
+  summarizeSession,
+  transcribe,
+} from "@/lib/ai";
+import {
+  assess,
+  countFillers,
+  countWords,
+  mean,
+  median,
+  talkStats,
+} from "@/lib/composure";
 import { giveCameraConsent, hasCameraConsent } from "@/lib/consent";
 import CameraConsent from "@/components/CameraConsent";
+import { LineChart, TalkTimeline } from "./Charts";
+import type {
+  AnswerResult,
+  Level,
+  Report,
+  Sample,
+  TalkEvent,
+  Win,
+} from "@/types/coach";
 import type { SignalProvider } from "@/types/signals";
 
-type State = "idle" | "starting" | "active" | "paused" | "completed";
-type Segment = { talking: boolean; ms: number };
+type Phase =
+  | "setup"
+  | "generating"
+  | "baseline"
+  | "ready"
+  | "answering"
+  | "processing"
+  | "feedback"
+  | "summarizing"
+  | "done";
 
+const BASELINE_MS = 25000;
 const ACCENT = "#6958d9";
-const SOFT = "#eeebff";
-
-const fmt = (ms: number) => {
-  const s = Math.floor(ms / 1000);
-  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+const LEVELS: Record<Level, { label: string; color: string; bg: string }> = {
+  steady: { label: "Steady", color: "#287d70", bg: "#e6f6f2" },
+  mostly: { label: "Mostly steady", color: "#a06a14", bg: "#fdf3df" },
+  raised: { label: "Signals were raised", color: "#b4532f", bg: "#fdece6" },
 };
 
-export default function SpeakEasySession() {
-  const [state, setState] = useState<State>("idle");
-  const [message, setMessage] = useState("");
+const clock = (ms: number) => {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+
+export default function SpeakEasyCoach() {
+  const [phase, setPhase] = useState<Phase>("setup");
+  const [topic, setTopic] = useState("");
+  const [count, setCount] = useState(3);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [hint, setHint] = useState("");
-  const [elapsed, setElapsed] = useState(0);
-  const [speaking, setSpeaking] = useState(0);
-  const [silence, setSilence] = useState(0);
-  const [talkingNow, setTalkingNow] = useState<boolean | null>(null);
-  const [segments, setSegments] = useState<Segment[]>([]);
-  const [cameraOn, setCameraOn] = useState(false);
   const [askConsent, setAskConsent] = useState(false);
+  const [cameraOn, setCameraOn] = useState(false);
+  const [micOn, setMicOn] = useState(false);
+  const [questions, setQuestions] = useState<string[]>([]);
+  const [qIndex, setQIndex] = useState(0);
+  const [answers, setAnswers] = useState<AnswerResult[]>([]);
+  const [baseline, setBaseline] = useState<{
+    breath: number | null;
+    pulse: number | null;
+  }>({ breath: null, pulse: null });
+  const [baselineLeft, setBaselineLeft] = useState(BASELINE_MS);
+  const [talkingNow, setTalkingNow] = useState<boolean | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [answerElapsed, setAnswerElapsed] = useState(0);
+  const [charts, setCharts] = useState<{
+    breath: Sample[];
+    pulse: Sample[];
+    talk: TalkEvent[];
+    windows: Win[];
+  }>({ breath: [], pulse: [], talk: [], windows: [] });
+  const [report, setReport] = useState<Report | null>(null);
+  const [totalMs, setTotalMs] = useState(0);
 
   const video = useRef<HTMLVideoElement>(null);
   const provider = useRef<SignalProvider | null>(null);
-  const talking = useRef<boolean | null>(null); // latest reading from Presage
-  const lastTick = useRef(0);
-  const totals = useRef({ elapsed: 0, speaking: 0, silence: 0 });
-  const segs = useRef<Segment[]>([]);
+  const t0 = useRef(0);
+  const breath = useRef<Sample[]>([]);
+  const pulse = useRef<Sample[]>([]);
+  const talkLog = useRef<TalkEvent[]>([]);
+  const windows = useRef<Win[]>([]);
+  const answerStart = useRef(0);
+  const recorder = useRef<MediaRecorder | null>(null);
+  const chunks = useRef<Blob[]>([]);
+  const mic = useRef<MediaStream | null>(null);
 
-  // Presage tells us here whether talking is detected.
+  const now = () => Date.now() - t0.current;
+
+  // Presage tells us here what it sees.
   const getProvider = useCallback(() => {
     if (!provider.current) {
       provider.current = createPresageProvider({
-        onTalkingDetected: (isTalking) => {
-          talking.current = isTalking;
-          setTalkingNow(isTalking);
+        onTalkingDetected: (talking) => {
+          const last = talkLog.current.at(-1);
+          if (!last || last.talking !== talking)
+            talkLog.current.push({ t: now(), talking });
+          setTalkingNow(talking);
         },
+        onBreathingRateReceived: (v) => breath.current.push({ t: now(), v }),
+        onPulseRateReceived: (v) => pulse.current.push({ t: now(), v }),
         onStream: (stream) => {
           setCameraOn(!!stream);
           if (video.current) {
@@ -61,123 +130,326 @@ export default function SpeakEasySession() {
           }
         },
         onHint: setHint,
-        onError: setMessage,
+        onError: setNotice,
       });
     }
     return provider.current;
   }, []);
 
-  // Every quarter of a second: add the time to "speaking" or "silence".
+  // Once a second: refresh the charts and timers.
+  const running =
+    phase === "baseline" ||
+    phase === "ready" ||
+    phase === "answering" ||
+    phase === "processing" ||
+    phase === "feedback";
   useEffect(() => {
-    if (state !== "active") return;
-    lastTick.current = Date.now();
+    if (!running) return;
     const id = setInterval(() => {
-      const now = Date.now();
-      const dt = now - lastTick.current;
-      lastTick.current = now;
-      const t = totals.current;
-      t.elapsed += dt;
-      if (talking.current !== null) {
-        if (talking.current) t.speaking += dt;
-        else t.silence += dt;
-        const last = segs.current[segs.current.length - 1];
-        if (last && last.talking === talking.current) last.ms += dt;
-        else segs.current.push({ talking: talking.current, ms: dt });
-      }
-      setElapsed(t.elapsed);
-      setSpeaking(t.speaking);
-      setSilence(t.silence);
-      setSegments([...segs.current]);
+      setElapsed(now());
+      setCharts({
+        breath: [...breath.current],
+        pulse: [...pulse.current],
+        talk: [...talkLog.current],
+        windows: [...windows.current],
+      });
+      if (answerStart.current) setAnswerElapsed(now() - answerStart.current);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [running]);
+
+  // Resting level: the first 25 seconds.
+  useEffect(() => {
+    if (phase !== "baseline") return;
+    const id = setInterval(() => {
+      const left = BASELINE_MS - now();
+      setBaselineLeft(Math.max(0, left));
+      if (left <= 0) finishBaseline();
     }, 250);
     return () => clearInterval(id);
-  }, [state]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
-  // Close the camera if the person leaves this page.
+  // Close camera and microphone if the person leaves this page.
   useEffect(() => {
     return () => {
       provider.current?.destroy();
-      provider.current = null;
+      mic.current?.getTracks().forEach((t) => t.stop());
     };
   }, []);
 
-  async function begin() {
-    // First time only: ask before the camera is ever turned on.
-    if ((state === "idle" || state === "completed") && !hasCameraConsent()) {
+  function finishBaseline() {
+    const inRange = (list: Sample[]) =>
+      list.filter((s) => s.t >= 5000 && s.t <= BASELINE_MS).map((s) => s.v);
+    const b = inRange(breath.current);
+    const p = inRange(pulse.current);
+    setBaseline({
+      breath: b.length >= 2 ? median(b) : null,
+      pulse: p.length >= 2 ? median(p) : null,
+    });
+    setPhase("ready");
+  }
+
+  function resetAll() {
+    breath.current = [];
+    pulse.current = [];
+    talkLog.current = [];
+    windows.current = [];
+    answerStart.current = 0;
+    setCharts({ breath: [], pulse: [], talk: [], windows: [] });
+    setAnswers([]);
+    setQIndex(0);
+    setReport(null);
+    setTalkingNow(null);
+    setElapsed(0);
+    setAnswerElapsed(0);
+    setNotice("");
+    setHint("");
+    setError("");
+  }
+
+  async function createQuestions() {
+    setError("");
+    if (topic.trim().length < 5) {
+      setError("Please tell us what you are practicing for, in a few words.");
+      return;
+    }
+    if (!hasCameraConsent()) {
       setAskConsent(true);
       return;
     }
-    setMessage("");
-    setHint("");
-    if (state === "idle" || state === "completed") {
-      totals.current = { elapsed: 0, speaking: 0, silence: 0 };
-      segs.current = [];
-      setElapsed(0);
-      setSpeaking(0);
-      setSilence(0);
-      setSegments([]);
+    setPhase("generating");
+    try {
+      const list = await generateQuestions(topic.trim(), count);
+      setQuestions(list);
+    } catch (err) {
+      setError(friendlyAiError(err));
+      setPhase("setup");
+      return;
     }
-    talking.current = null;
-    setTalkingNow(null);
-    const previous = state;
-    setState("starting");
+    resetAll();
+    t0.current = Date.now();
     try {
       await getProvider().start();
-      setState("active");
     } catch (err) {
-      console.error(err);
-      setMessage(friendlyError(err));
+      console.warn(err);
+      setError(friendlyError(err));
       provider.current?.destroy();
       provider.current = null;
-      setState(previous === "paused" ? "paused" : "idle");
+      setPhase("setup");
+      return;
+    }
+    setBaselineLeft(BASELINE_MS);
+    setPhase("baseline");
+  }
+
+  async function startAnswer() {
+    setError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mic.current = stream;
+      chunks.current = [];
+      const rec = new MediaRecorder(stream);
+      rec.ondataavailable = (e) =>
+        e.data.size > 0 && chunks.current.push(e.data);
+      rec.start();
+      recorder.current = rec;
+      setMicOn(true);
+    } catch (err) {
+      console.warn(err);
+      setError("Please allow microphone access so we can hear your answer.");
+      return;
+    }
+    answerStart.current = now();
+    setAnswerElapsed(0);
+    setPhase("answering");
+  }
+
+  function stopRecording(): Promise<Blob> {
+    return new Promise((resolve) => {
+      const rec = recorder.current;
+      const done = () => {
+        mic.current?.getTracks().forEach((t) => t.stop());
+        mic.current = null;
+        setMicOn(false);
+        resolve(
+          new Blob(chunks.current, { type: rec?.mimeType || "audio/webm" }),
+        );
+      };
+      if (!rec || rec.state === "inactive") return done();
+      rec.onstop = done;
+      rec.stop();
+    });
+  }
+
+  async function finishAnswer() {
+    const start = answerStart.current;
+    const end = now();
+    answerStart.current = 0;
+    setPhase("processing");
+    try {
+      const audio = await stopRecording();
+      const transcript = await transcribe(audio);
+      const words = countWords(transcript);
+      if (words < 3) {
+        setError(
+          "We couldn't hear your answer. Please try this question again.",
+        );
+        setPhase("ready");
+        return;
+      }
+      const talk = talkStats(talkLog.current, start, end);
+      const inWindow = (list: Sample[]) =>
+        list.filter((s) => s.t >= start && s.t <= end).map((s) => s.v);
+      const breathAvg = mean(inWindow(breath.current));
+      const pulseAvg = mean(inWindow(pulse.current));
+      const fillers = countFillers(transcript);
+      const verdict = assess({
+        words,
+        fillers,
+        ...talk,
+        breathAvg,
+        pulseAvg,
+        baseBreath: baseline.breath,
+        basePulse: baseline.pulse,
+      });
+      const review = await reviewAnswer({
+        topic,
+        question: questions[qIndex],
+        transcript,
+        seconds: Math.round((end - start) / 1000),
+        wpm: verdict.wpm,
+        fillers,
+        longestPauseSeconds: Math.round(talk.longestSilenceMs / 1000),
+        flags: verdict.flags,
+      });
+      windows.current.push({ start, end, label: `Q${qIndex + 1}` });
+      setCharts({
+        breath: [...breath.current],
+        pulse: [...pulse.current],
+        talk: [...talkLog.current],
+        windows: [...windows.current],
+      });
+      setAnswers((a) => [
+        ...a,
+        {
+          question: questions[qIndex],
+          transcript,
+          startMs: start,
+          endMs: end,
+          ...talk,
+          words,
+          wpm: verdict.wpm,
+          fillers,
+          breathAvg,
+          pulseAvg,
+          flags: verdict.flags,
+          level: verdict.level,
+          review,
+        },
+      ]);
+      setPhase("feedback");
+    } catch (err) {
+      console.warn(err);
+      setError(friendlyAiError(err));
+      setPhase("ready");
     }
   }
 
-  async function pause() {
-    setState("paused");
+  async function finishPractice(all: AnswerResult[]) {
+    setPhase("summarizing");
+    const total = now();
+    setTotalMs(total);
+    setCharts({
+      breath: [...breath.current],
+      pulse: [...pulse.current],
+      talk: [...talkLog.current],
+      windows: [...windows.current],
+    });
     try {
       await provider.current?.stop();
     } catch (err) {
-      console.error(err);
-    }
-  }
-
-  async function end() {
-    setState("completed");
-    try {
-      await provider.current?.stop();
-    } catch (err) {
-      console.error(err);
+      console.warn(err);
     }
     provider.current?.destroy();
     provider.current = null;
-    save();
+    let rep: Report;
+    try {
+      rep = await summarizeSession(topic, all);
+    } catch (err) {
+      console.warn(err);
+      setNotice(friendlyAiError(err));
+      rep = { overall: "", doThis: [], avoidThis: [], composureNote: "" };
+    }
+    setReport(rep);
+    save(all, total);
+    setPhase("done");
   }
 
-  function save() {
-    const t = totals.current;
+  function save(all: AnswerResult[], total: number) {
+    if (all.length === 0) return;
+    const avg = all.reduce((s, a) => s + a.review.rating, 0) / all.length;
+    const worst = all.some((a) => a.level === "raised")
+      ? "raised"
+      : all.some((a) => a.level === "mostly")
+        ? "mostly"
+        : "steady";
     try {
       const old = JSON.parse(localStorage.getItem("humankit-sessions") || "[]");
       const entry = {
         id: Date.now(),
         tool: "SpeakEasy",
         date: new Date().toISOString(),
-        duration: Math.floor(t.elapsed / 1000),
-        measurement: `Talking detected ${fmt(t.speaking)} · Silence ${fmt(t.silence)}`,
+        duration: Math.floor(total / 1000),
+        measurement: `${all.length} answers · average ${avg.toFixed(1)}/5 · ${LEVELS[worst].label}`,
+        topic,
       };
       localStorage.setItem(
         "humankit-sessions",
         JSON.stringify([entry, ...old]),
       );
     } catch (err) {
-      console.error(err);
+      console.warn(err);
     }
   }
 
-  const measured = speaking + silence;
-  const pct = (v: number) =>
-    measured > 0 ? Math.round((v / measured) * 100) : 0;
-  const busy = state === "starting";
-  const running = state === "active";
+  function nextStep() {
+    setError("");
+    if (qIndex + 1 < questions.length) {
+      setQIndex(qIndex + 1);
+      setPhase("ready");
+    } else {
+      finishPractice(answers);
+    }
+  }
+
+  async function endEarly() {
+    mic.current?.getTracks().forEach((t) => t.stop());
+    if (answers.length > 0) return finishPractice(answers);
+    try {
+      await provider.current?.stop();
+    } catch (err) {
+      console.warn(err);
+    }
+    provider.current?.destroy();
+    provider.current = null;
+    resetAll();
+    setPhase("setup");
+  }
+
+  function again() {
+    resetAll();
+    setQuestions([]);
+    setPhase("setup");
+  }
+
+  const duration = Math.max(phase === "done" ? totalMs : elapsed, BASELINE_MS);
+  const inSession =
+    phase !== "setup" &&
+    phase !== "generating" &&
+    phase !== "done" &&
+    phase !== "summarizing";
+  const showCharts = phase !== "setup" && phase !== "generating";
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -187,13 +459,14 @@ export default function SpeakEasySession() {
           onAgree={() => {
             giveCameraConsent();
             setAskConsent(false);
-            begin();
+            createQuestions();
           }}
         />
       )}
+
       <Link
         href="/dashboard"
-        className="mb-7 flex items-center gap-2 text-sm font-medium text-[#718096]"
+        className="my-7 flex items-center gap-2 text-sm font-medium text-[#718096]"
       >
         <ArrowLeft size={15} /> Back to dashboard
       </Link>
@@ -202,224 +475,481 @@ export default function SpeakEasySession() {
         <div>
           <div
             className="mb-3 inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold"
-            style={{ background: SOFT, color: ACCENT }}
+            style={{ background: "#eeebff", color: ACCENT }}
           >
-            <Mic size={13} /> Speaking practice
+            <Mic size={13} /> Interview coach
           </div>
           <h1 className="text-3xl font-bold tracking-[-.03em]">SpeakEasy</h1>
           <p className="mt-2 text-[#718096]">
-            Practice presenting and see when talking is detected.
+            Practice real questions. See how steady you were. Get honest
+            feedback.
           </p>
         </div>
-        <div className="flex items-center gap-2 rounded-xl border border-[#e7e8f0] bg-white px-4 py-2.5">
-          <span
-            className={`h-2 w-2 rounded-full ${cameraOn ? "bg-[#e05252]" : "bg-[#c7cad4]"}`}
+        <div className="flex gap-2">
+          <Pill
+            on={cameraOn}
+            on_label="Camera is on"
+            off_label="Camera is off"
           />
-          <span className="text-sm text-[#718096]">
-            {cameraOn ? "Camera is on" : "Camera is off"}
-          </span>
+          <Pill
+            on={micOn}
+            on_label="Microphone is on"
+            off_label="Microphone is off"
+          />
         </div>
       </div>
 
-      {message && (
+      {error && (
         <div className="mt-6 rounded-xl border border-[#efcaca] bg-[#fdf3f3] p-4 text-sm text-[#a94b4b]">
-          {message}
+          {error}
+        </div>
+      )}
+      {notice && inSession && (
+        <div className="mt-6 rounded-xl border border-[#f0e2bf] bg-[#fdf8ea] p-4 text-sm text-[#8a6a1c]">
+          {notice}
         </div>
       )}
 
-      <div className="mt-8 grid gap-5 lg:grid-cols-[1.5fr_1fr]">
-        <section className="rounded-2xl border border-[#e7e8f0] bg-white p-5 shadow-[0_8px_30px_rgba(31,36,64,.04)]">
-          <div className="relative flex min-h-[310px] items-center justify-center overflow-hidden rounded-xl bg-[#20283d]">
-            <video
-              ref={video}
-              muted
-              playsInline
-              className={`absolute inset-0 h-full w-full -scale-x-100 object-cover ${cameraOn ? "" : "hidden"}`}
-            />
-            {!cameraOn && (
-              <div className="relative text-center text-white">
-                <div className="mx-auto mb-4 grid h-20 w-20 place-items-center rounded-full border border-white/20 bg-white/10">
-                  <Camera size={27} strokeWidth={1.5} />
-                </div>
-                <p className="text-sm font-medium">
-                  {busy ? "Starting the camera…" : "Camera preview"}
-                </p>
-                <p className="mt-1 text-xs text-white/50">
-                  Your camera turns on only when you press Start.
-                </p>
-              </div>
-            )}
-            {running && (
-              <span className="absolute left-3 top-3 rounded-full bg-black/50 px-3 py-1 text-xs font-medium text-white">
-                {talkingNow === null
-                  ? "Waiting for a reliable measurement."
-                  : talkingNow
-                    ? "Talking detected"
-                    : "Silence"}
-              </span>
-            )}
-          </div>
-
-          {hint && running && (
-            <p className="mt-3 text-xs text-[#8992a6]">Tip: {hint}</p>
-          )}
-
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <p className="text-xs uppercase tracking-wider text-[#8992a6]">
-                Session timer
-              </p>
-              <p className="mt-1 font-mono text-2xl font-semibold">
-                {fmt(elapsed)}
-              </p>
-            </div>
-            <div className="flex gap-2">
-              {state === "idle" || state === "completed" ? (
-                <button
-                  onClick={begin}
-                  disabled={busy}
-                  className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
-                  style={{ background: ACCENT }}
-                >
-                  <Play size={15} fill="currentColor" /> Start
-                </button>
-              ) : (
-                <>
-                  {state === "paused" ? (
-                    <button
-                      onClick={begin}
-                      className="flex items-center gap-2 rounded-xl bg-[#f3f3f7] px-4 py-2.5 text-sm font-semibold"
-                    >
-                      <Play size={15} fill="currentColor" /> Resume
-                    </button>
-                  ) : (
-                    <button
-                      onClick={pause}
-                      disabled={busy}
-                      className="flex items-center gap-2 rounded-xl bg-[#f3f3f7] px-4 py-2.5 text-sm font-semibold disabled:opacity-60"
-                    >
-                      <Pause size={15} /> Pause
-                    </button>
-                  )}
-                  <button
-                    onClick={end}
-                    disabled={busy}
-                    className="grid h-10 w-10 place-items-center rounded-xl border border-[#efcaca] text-[#c86b6b] disabled:opacity-60"
-                    aria-label="End session"
-                  >
-                    <Square size={15} fill="currentColor" />
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        </section>
-
-        <aside className="space-y-5">
-          <div className="rounded-2xl border border-[#e7e8f0] bg-white p-6">
-            <h2 className="font-semibold">Live measurements</h2>
-            <div className="mt-6 space-y-5">
-              <Row
-                label="Talking detected"
-                value={
-                  measured > 0 || running
-                    ? `${fmt(speaking)} (${pct(speaking)}%)`
-                    : "—"
-                }
-              />
-              <Row
-                label="Silence"
-                value={
-                  measured > 0 || running
-                    ? `${fmt(silence)} (${pct(silence)}%)`
-                    : "—"
-                }
-              />
-            </div>
-            <div className="mt-6 flex items-start gap-2 rounded-xl bg-[#fafafd] p-3 text-xs leading-5 text-[#8992a6]">
-              <ShieldCheck
-                size={15}
-                className="mt-0.5 shrink-0"
-                style={{ color: ACCENT }}
-              />
-              This shows detected talking only. It does not judge how good your
-              speech is.{" "}
-              <Link href="/privacy" className="font-semibold underline">
-                Privacy and data
-              </Link>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-[#e7e8f0] bg-white p-6">
-            <h2 className="font-semibold">Activity timeline</h2>
-            <div className="mt-5 flex h-12 w-full overflow-hidden rounded-lg bg-[#f5f5f8]">
-              {segments.map((s, i) => (
-                <div
-                  key={i}
-                  title={s.talking ? "Talking" : "Silence"}
-                  style={{
-                    flexGrow: s.ms,
-                    background: s.talking ? ACCENT : SOFT,
-                  }}
-                />
-              ))}
-            </div>
-            <div className="mt-3 flex gap-4 text-xs text-[#8992a6]">
-              <span className="flex items-center gap-1.5">
-                <i
-                  className="h-2 w-2 rounded-full"
-                  style={{ background: ACCENT }}
-                />{" "}
-                Talking
-              </span>
-              <span className="flex items-center gap-1.5">
-                <i
-                  className="h-2 w-2 rounded-full"
-                  style={{ background: SOFT }}
-                />{" "}
-                Silence
-              </span>
-            </div>
-            {segments.length === 0 && (
-              <p className="mt-3 text-xs text-[#8992a6]">
-                Your timeline will appear once a measurement arrives.
-              </p>
-            )}
-          </div>
-        </aside>
-      </div>
-
-      {state === "completed" && (
-        <div className="mt-5 rounded-2xl border border-[#cceee7] bg-[#f0fbf8] p-5 text-sm text-[#287d70]">
-          <p className="font-semibold">
-            Session summary (saved on this device)
+      {(phase === "setup" || phase === "generating") && (
+        <section className="mt-8 max-w-2xl rounded-2xl border border-[#e7e8f0] bg-white p-6 shadow-[0_8px_30px_rgba(31,36,64,.04)]">
+          <h2 className="text-lg font-semibold">
+            What are you practicing for?
+          </h2>
+          <p className="mt-1 text-sm text-[#718096]">
+            The AI will ask you questions about it.
           </p>
-          <ul className="mt-2 space-y-1">
-            <li>Total session: {fmt(elapsed)}</li>
+          <textarea
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            rows={3}
+            placeholder="Example: A junior frontend developer interview at a fintech company"
+            className="mt-4 w-full rounded-xl border border-[#e7e8f0] p-3 text-sm outline-none focus:border-[#6958d9]"
+          />
+          <div className="mt-4 flex items-center gap-3 text-sm">
+            <label htmlFor="count" className="text-[#718096]">
+              Number of questions
+            </label>
+            <select
+              id="count"
+              value={count}
+              onChange={(e) => setCount(Number(e.target.value))}
+              className="rounded-lg border border-[#e7e8f0] px-3 py-2"
+            >
+              {[3, 4, 5].map((n) => (
+                <option key={n}>{n}</option>
+              ))}
+            </select>
+          </div>
+          <ul className="mt-5 list-disc space-y-1 pl-5 text-xs leading-5 text-[#8992a6]">
             <li>
-              Talking detected: {fmt(speaking)} ({pct(speaking)}%)
+              Sit so your face and chest are in the picture, with good light in
+              front of you.
             </li>
             <li>
-              Silence: {fmt(silence)} ({pct(silence)}%)
+              First you sit quietly for 25 seconds so we can see your resting
+              level.
             </li>
+            <li>Then you answer out loud, like a real interview.</li>
           </ul>
-          {elapsed - measured > 1500 && (
-            <p className="mt-2 text-xs">
-              The remaining {fmt(elapsed - measured)} was spent waiting for a
-              reliable measurement.
+          {!GROQ_API_KEY && (
+            <p className="mt-4 text-xs text-[#a94b4b]">
+              Your Groq API key is missing. Add it to the .env.local file and
+              restart the app.
             </p>
           )}
+          <button
+            onClick={createQuestions}
+            disabled={phase === "generating"}
+            className="mt-6 flex items-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold text-white disabled:opacity-60"
+            style={{ background: ACCENT }}
+          >
+            {phase === "generating" ? (
+              <>
+                <Loader2 size={15} className="animate-spin" /> Getting ready…
+              </>
+            ) : (
+              <>
+                <Sparkles size={15} /> Create my questions
+              </>
+            )}
+          </button>
+        </section>
+      )}
+
+      {showCharts && (
+        <div className="mt-8 grid gap-5 lg:grid-cols-[1.1fr_1fr]">
+          <div className="space-y-5">
+            {phase !== "done" && (
+              <section className="rounded-2xl border border-[#e7e8f0] bg-white p-5 shadow-[0_8px_30px_rgba(31,36,64,.04)]">
+                <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-xl bg-[#20283d]">
+                  <video
+                    ref={video}
+                    muted
+                    playsInline
+                    className={`absolute inset-0 h-full w-full -scale-x-100 object-cover ${cameraOn ? "" : "hidden"}`}
+                  />
+                  {!cameraOn && <Camera size={28} className="text-white/60" />}
+                  {inSession && (
+                    <span className="absolute left-3 top-3 rounded-full bg-black/50 px-3 py-1 text-xs font-medium text-white">
+                      {talkingNow === null
+                        ? "Waiting for a reliable measurement."
+                        : talkingNow
+                          ? "Talking detected"
+                          : "Silence"}
+                    </span>
+                  )}
+                </div>
+                {hint && inSession && (
+                  <p className="mt-3 text-xs text-[#8992a6]">Tip: {hint}</p>
+                )}
+              </section>
+            )}
+
+            {phase === "baseline" && (
+              <Card>
+                <h2 className="text-lg font-semibold">
+                  Sit still and breathe normally
+                </h2>
+                <p className="mt-2 text-sm text-[#718096]">
+                  This shows us your resting breathing and pulse. Later answers
+                  are compared with it.
+                </p>
+                <p className="mt-4 font-mono text-3xl font-semibold">
+                  {Math.ceil(baselineLeft / 1000)}s
+                </p>
+                <button
+                  onClick={finishBaseline}
+                  className="mt-4 text-xs font-semibold text-[#8992a6] underline"
+                >
+                  Skip this step
+                </button>
+              </Card>
+            )}
+
+            {(phase === "ready" ||
+              phase === "answering" ||
+              phase === "processing") && (
+              <Card>
+                <p
+                  className="text-xs font-semibold uppercase tracking-wider"
+                  style={{ color: ACCENT }}
+                >
+                  Question {qIndex + 1} of {questions.length}
+                </p>
+                <h2 className="mt-2 text-xl font-semibold leading-snug">
+                  {questions[qIndex]}
+                </h2>
+                {phase === "ready" && (
+                  <button
+                    onClick={startAnswer}
+                    className="mt-5 flex items-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold text-white"
+                    style={{ background: ACCENT }}
+                  >
+                    <Play size={15} fill="currentColor" /> Start answering
+                  </button>
+                )}
+                {phase === "answering" && (
+                  <div className="mt-5 flex items-center gap-4">
+                    <button
+                      onClick={finishAnswer}
+                      className="flex items-center gap-2 rounded-xl bg-[#20283d] px-5 py-3 text-sm font-semibold text-white"
+                    >
+                      <Square size={14} fill="currentColor" /> Finish answer
+                    </button>
+                    <span className="font-mono text-lg font-semibold">
+                      {clock(answerElapsed)}
+                    </span>
+                    <span className="text-xs text-[#8992a6]">
+                      Speak as you would in the real interview.
+                    </span>
+                  </div>
+                )}
+                {phase === "processing" && (
+                  <p className="mt-5 flex items-center gap-2 text-sm text-[#718096]">
+                    <Loader2 size={15} className="animate-spin" /> Turning your
+                    voice into text and reviewing your answer…
+                  </p>
+                )}
+              </Card>
+            )}
+
+            {phase === "feedback" && answers.length > 0 && (
+              <Feedback
+                a={answers[answers.length - 1]}
+                last={qIndex + 1 >= questions.length}
+                onNext={nextStep}
+              />
+            )}
+            {phase === "summarizing" && (
+              <Card>
+                <p className="flex items-center gap-2 text-sm text-[#718096]">
+                  <Loader2 size={15} className="animate-spin" /> Putting your
+                  results together…
+                </p>
+              </Card>
+            )}
+            {phase === "done" && report && (
+              <Results
+                topic={topic}
+                answers={answers}
+                report={report}
+                onAgain={again}
+              />
+            )}
+
+            {inSession && phase !== "processing" && (
+              <button
+                onClick={endEarly}
+                className="text-xs font-semibold text-[#8992a6] underline"
+              >
+                {answers.length > 0
+                  ? "End practice and see results"
+                  : "Cancel practice"}
+              </button>
+            )}
+          </div>
+
+          <aside className="space-y-5">
+            <LineChart
+              title="Breathing rate"
+              unit="breaths/min"
+              color="#2f9e8f"
+              samples={charts.breath}
+              duration={duration}
+              baseline={baseline.breath}
+              windows={charts.windows}
+            />
+            <LineChart
+              title="Pulse rate"
+              unit="beats/min"
+              color="#d9604f"
+              samples={charts.pulse}
+              duration={duration}
+              baseline={baseline.pulse}
+              windows={charts.windows}
+            />
+            <TalkTimeline
+              log={charts.talk}
+              duration={duration}
+              windows={charts.windows}
+            />
+            <p className="px-1 text-[11px] leading-5 text-[#8992a6]">
+              Breathing and pulse can rise for many reasons, such as excitement,
+              movement or coffee. They are hints about your body, not a
+              diagnosis. Pulse can take about 20 seconds to appear.
+            </p>
+          </aside>
         </div>
       )}
     </div>
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Pill({
+  on,
+  on_label,
+  off_label,
+}: {
+  on: boolean;
+  on_label: string;
+  off_label: string;
+}) {
   return (
-    <div className="flex items-end justify-between border-b border-[#f0f0f5] pb-4">
-      <span className="text-sm text-[#718096]">{label}</span>
-      <span className="text-xl font-semibold">{value}</span>
+    <div className="flex items-center gap-2 rounded-xl border border-[#e7e8f0] bg-white px-3 py-2.5">
+      <span
+        className={`h-2 w-2 rounded-full ${on ? "bg-[#e05252]" : "bg-[#c7cad4]"}`}
+      />
+      <span className="text-sm text-[#718096]">
+        {on ? on_label : off_label}
+      </span>
+    </div>
+  );
+}
+
+function Card({ children }: { children: React.ReactNode }) {
+  return (
+    <section className="rounded-2xl border border-[#e7e8f0] bg-white p-6 shadow-[0_8px_30px_rgba(31,36,64,.04)]">
+      {children}
+    </section>
+  );
+}
+
+function List({ items, color }: { items: string[]; color: string }) {
+  return (
+    <ul className="mt-2 space-y-1.5 text-sm leading-6 text-[#39415a]">
+      {items.map((t, i) => (
+        <li key={i} className="flex gap-2">
+          <span style={{ color }}>●</span>
+          <span>{t}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function Composure({ a }: { a: AnswerResult }) {
+  const l = LEVELS[a.level];
+  return (
+    <div className="rounded-xl p-4" style={{ background: l.bg }}>
+      <p className="text-sm font-semibold" style={{ color: l.color }}>
+        Body and pace: {l.label}
+      </p>
+      {a.flags.length > 0 ? (
+        <List items={a.flags} color={l.color} />
+      ) : (
+        <p className="mt-2 text-sm text-[#39415a]">
+          Your breathing, pulse and pace looked steady for this answer.
+        </p>
+      )}
+      <p className="mt-3 text-[11px] text-[#718096]">
+        Breathing{" "}
+        {a.breathAvg !== null ? a.breathAvg.toFixed(0) : "not measured"} · Pulse{" "}
+        {a.pulseAvg !== null ? a.pulseAvg.toFixed(0) : "not measured"} · Talking{" "}
+        {clock(a.talkingMs)} · Silence {clock(a.silenceMs)}
+      </p>
+    </div>
+  );
+}
+
+function Feedback({
+  a,
+  last,
+  onNext,
+}: {
+  a: AnswerResult;
+  last: boolean;
+  onNext: () => void;
+}) {
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-4">
+        <h2 className="text-lg font-semibold">How that answer went</h2>
+        <span
+          className="rounded-full px-3 py-1 text-sm font-bold"
+          style={{ background: "#eeebff", color: ACCENT }}
+        >
+          {a.review.rating}/5
+        </span>
+      </div>
+      <p className="mt-2 text-sm leading-6 text-[#39415a]">
+        {a.review.summary}
+      </p>
+      <h3 className="mt-4 text-sm font-semibold text-[#287d70]">What worked</h3>
+      <List items={a.review.strengths} color="#287d70" />
+      <h3 className="mt-4 text-sm font-semibold text-[#b4532f]">
+        What to improve
+      </h3>
+      <List items={a.review.improvements} color="#b4532f" />
+      <div className="mt-5">
+        <Composure a={a} />
+      </div>
+      <details className="mt-4 text-sm">
+        <summary className="cursor-pointer text-xs font-semibold text-[#8992a6]">
+          What we heard
+        </summary>
+        <p className="mt-2 leading-6 text-[#718096]">{a.transcript}</p>
+      </details>
+      <button
+        onClick={onNext}
+        className="mt-5 flex items-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold text-white"
+        style={{ background: ACCENT }}
+      >
+        {last ? "See my results" : "Next question"} <ArrowRight size={15} />
+      </button>
+    </Card>
+  );
+}
+
+function Results({
+  topic,
+  answers,
+  report,
+  onAgain,
+}: {
+  topic: string;
+  answers: AnswerResult[];
+  report: Report;
+  onAgain: () => void;
+}) {
+  const avg =
+    answers.reduce((s, a) => s + a.review.rating, 0) /
+    Math.max(1, answers.length);
+  return (
+    <div className="space-y-5">
+      <Card>
+        <p
+          className="text-xs font-semibold uppercase tracking-wider"
+          style={{ color: ACCENT }}
+        >
+          Your results
+        </p>
+        <h2 className="mt-1 text-xl font-semibold">{topic}</h2>
+        <p className="mt-1 text-sm text-[#718096]">
+          {answers.length} answers · average {avg.toFixed(1)}/5
+        </p>
+        {report.overall && (
+          <p className="mt-4 text-sm leading-6 text-[#39415a]">
+            {report.overall}
+          </p>
+        )}
+        {report.composureNote && (
+          <p className="mt-3 rounded-xl bg-[#fafafd] p-3 text-sm leading-6 text-[#39415a]">
+            {report.composureNote}
+          </p>
+        )}
+        {report.doThis.length > 0 && (
+          <>
+            <h3 className="mt-5 text-sm font-semibold text-[#287d70]">
+              Do this
+            </h3>
+            <List items={report.doThis} color="#287d70" />
+          </>
+        )}
+        {report.avoidThis.length > 0 && (
+          <>
+            <h3 className="mt-5 text-sm font-semibold text-[#b4532f]">
+              Avoid this
+            </h3>
+            <List items={report.avoidThis} color="#b4532f" />
+          </>
+        )}
+      </Card>
+      {answers.map((a, i) => (
+        <Card key={i}>
+          <div className="flex items-start justify-between gap-4">
+            <h3 className="text-sm font-semibold">
+              Q{i + 1}. {a.question}
+            </h3>
+            <span
+              className="rounded-full bg-[#eeebff] px-3 py-1 text-sm font-bold"
+              style={{ color: ACCENT }}
+            >
+              {a.review.rating}/5
+            </span>
+          </div>
+          <p className="mt-2 text-sm leading-6 text-[#39415a]">
+            {a.review.summary}
+          </p>
+          <div className="mt-4">
+            <Composure a={a} />
+          </div>
+        </Card>
+      ))}
+      <div className="flex gap-3">
+        <button
+          onClick={onAgain}
+          className="flex items-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold text-white"
+          style={{ background: ACCENT }}
+        >
+          <RotateCcw size={15} /> Practice again
+        </button>
+        <Link
+          href="/history"
+          className="rounded-xl border border-[#e7e8f0] bg-white px-5 py-3 text-sm font-semibold"
+        >
+          View history
+        </Link>
+      </div>
     </div>
   );
 }

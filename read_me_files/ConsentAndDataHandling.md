@@ -1,13 +1,15 @@
-# Consent and Data Handling
+## Consent and Data Handling
 
-**Camera consent.** HumanKit never turns the camera on by itself. The first time you start a session, a screen explains what the camera is used for and asks you to agree. The camera turns on only after you press Start or Resume, and a "Camera is on" label is shown the whole time. It turns off when you press Pause or End, or leave the page.
+**Consent.** HumanKit never turns on the camera or microphone by itself. The first time you start SpeakEasy, a screen explains what is used and why, and asks you to agree. The camera is on during a practice session, and a "Camera is on" label is shown. The microphone is on only while you answer a question, with a "Microphone is on" label. Both turn off when you finish or leave the page.
 
-**What is stored.** HumanKit does not record, save or upload camera video or pictures. After a session, a short summary is saved in the app on your own device (browser local storage): the tool name, date, session length, and the time with talking detected and silence. HumanKit has no accounts, no server and no database, and it shares nothing with other people.
+**What is stored.** HumanKit does not record, save or upload camera video or pictures. Voice recordings are not kept: each one is used once to make text and then discarded. After a practice, a short summary is saved on your own device (browser local storage): tool name, date, length, the topic you typed, and your scores. The full text of your answers is not saved. HumanKit has no accounts, no server and no database.
 
-**Retention and deletion.** Summaries stay on your device until you delete them. You can delete one session in History, or press "Delete everything" on the Privacy page to remove all sessions and your camera agreement.
+**Sharing.** HumanKit shares nothing with other people. Two outside services are used, described below.
 
-**Presage SDK.** Measurements come from the Presage SmartSpectra Node.js SDK running inside the app. The SDK checks the app's API key with Presage's service over the internet while it measures, so a connection is needed. HumanKit turns the SDK's optional telemetry off (`enableTelemetry: false`).
+**Retention and deletion.** Summaries stay on your device until you delete them. You can delete one in History, or press "Delete everything" on the Privacy page to remove all summaries and your agreement.
 
-**Optional AI services.** None are used.
+**Presage SmartSpectra SDK.** Breathing, pulse and talking measurements come from the Presage SmartSpectra Node.js SDK inside the app. The SDK checks the app's API key with Presage's service over the internet while it measures, so a connection is needed. HumanKit turns the SDK's optional telemetry off (`enableTelemetry: false`).
 
-**Not medical.** HumanKit gives no diagnosis, treatment or medical advice. SpeakEasy shows detected talking activity only, and says nothing about how good someone's speech is.
+**Optional AI service (Groq).** SpeakEasy uses Groq to write interview questions, turn your spoken answers into text, and review them. Groq receives the practice topic you type, a recording of each answer, and the text of your answers together with measured numbers (such as pace and pulse). This is needed for the coach to work.
+
+**Not medical.** HumanKit gives no diagnosis, treatment or medical advice. Breathing and pulse can rise for many reasons, so SpeakEasy shows them only as hints, compared with your own resting level.

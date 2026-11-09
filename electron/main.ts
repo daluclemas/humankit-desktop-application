@@ -34,7 +34,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  // Camera only, and only for our own pages. Everything else is refused.
+  // Camera and microphone only, and only for our own pages. Everything else is refused.
   session.defaultSession.setPermissionRequestHandler(
     (webContents, permission, callback, details) => {
       const url = details?.requestingUrl || webContents.getURL() || "";
@@ -42,8 +42,10 @@ app.whenReady().then(() => {
         url.startsWith("file://") || (isDev && url.startsWith(DEV_URL));
       const mediaTypes =
         (details as { mediaTypes?: string[] }).mediaTypes ?? [];
-      const cameraOnly = mediaTypes.length === 1 && mediaTypes[0] === "video";
-      callback(permission === "media" && cameraOnly && ourPage);
+      const cameraOrMic = mediaTypes.every(
+        (type) => type === "video" || type === "audio",
+      );
+      callback(permission === "media" && cameraOrMic && ourPage);
     },
   );
 

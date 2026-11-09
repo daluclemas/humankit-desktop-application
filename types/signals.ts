@@ -11,7 +11,7 @@ export interface SignalSnapshot {
 }
 
 // The places where future measurements arrive. The screens only know about
-// these three names, never about Presage itself.
+// these names, never about Presage itself.
 export interface SignalHandlers {
   onTalkingDetected?: (talking: boolean, timestampUs: number) => void;
   onBlinkDetected?: (blinking: boolean, timestampUs: number) => void;
@@ -19,6 +19,7 @@ export interface SignalHandlers {
     breathsPerMinute: number,
     timestampUs: number,
   ) => void;
+  onPulseRateReceived?: (beatsPerMinute: number, timestampUs: number) => void;
   onStream?: (stream: MediaStream | null) => void;
   onHint?: (message: string) => void;
   onError?: (message: string) => void;

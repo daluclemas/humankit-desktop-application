@@ -11,7 +11,7 @@ export default function Page() {
     <div className="mx-auto max-w-3xl">
       <Link
         href="/dashboard"
-        className="mb-7 flex items-center gap-2 text-sm font-medium text-[#718096]"
+        className="my-7 flex items-center gap-2 text-sm font-medium text-[#718096]"
       >
         <ArrowLeft size={15} /> Back to dashboard
       </Link>
@@ -23,30 +23,54 @@ export default function Page() {
       <div className="mt-8 space-y-5">
         <Card title="Camera">
           <li>
-            The camera turns on only after you agree and press Start or Resume.
+            The camera turns on only after you agree and start a practice.
           </li>
           <li>While it is on, the app shows &ldquo;Camera is on&rdquo;.</li>
-          <li>It turns off when you press Pause or End, or leave the page.</li>
+          <li>It turns off when you end the practice or leave the page.</li>
           <li>HumanKit never uses the camera in secret.</li>
+        </Card>
+        <Card title="Microphone">
+          <li>
+            The microphone turns on only while you answer a question in
+            SpeakEasy, and the app shows &ldquo;Microphone is on&rdquo;.
+          </li>
+          <li>It turns off as soon as you press Finish answer.</li>
         </Card>
         <Card title="What is saved">
           <li>
             HumanKit does not record, save or upload camera video or pictures.
           </li>
           <li>
-            After a session, a short summary is saved in this app on your
-            device: tool name, date, length, and the time with talking detected
-            and silence.
+            Voice recordings are not kept. They are used once to make text and
+            then thrown away.
+          </li>
+          <li>
+            After a practice, a short summary is saved in this app on your
+            device: tool name, date, length, topic, and your scores. The full
+            text of your answers is not saved.
           </li>
           <li>
             Nothing is sent to a HumanKit server. HumanKit has no account and no
             database.
           </li>
         </Card>
+        <Card title="AI service (Groq)">
+          <li>
+            SpeakEasy uses Groq, an outside AI service, to write your questions,
+            turn your voice into text, and review your answers.
+          </li>
+          <li>
+            Groq receives the topic you type, a recording of each answer, and
+            the text of your answers with your numbers (such as pace and pulse).
+          </li>
+          <li>
+            Read Groq&apos;s own privacy information to see how they handle it.
+          </li>
+        </Card>
         <Card title="Presage">
           <li>
-            Measurements come from the Presage SmartSpectra tool inside this
-            app.
+            Breathing, pulse and talking measurements come from the Presage
+            SmartSpectra tool inside this app.
           </li>
           <li>
             It needs an internet connection to check the app&apos;s API key
@@ -57,8 +81,9 @@ export default function Page() {
         <Card title="What HumanKit is not">
           <li>It does not diagnose, treat or give medical advice.</li>
           <li>
-            Talking detection shows detected talking only. It says nothing about
-            how good your speech is.
+            Breathing and pulse can rise for many reasons. SpeakEasy shows them
+            as hints about your body, not as a diagnosis or proof of how you
+            feel.
           </li>
         </Card>
 

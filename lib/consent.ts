@@ -1,5 +1,6 @@
-// Remembers (on this device only) that the person agreed to camera use.
-const KEY = "humankit-camera-consent";
+// Remembers (on this device only) that the person agreed.
+const KEY = "humankit-consent-v2";
+const OLD_KEY = "humankit-camera-consent";
 const SESSIONS = "humankit-sessions";
 
 export function hasCameraConsent(): boolean {
@@ -22,6 +23,7 @@ export function giveCameraConsent() {
 export function deleteAllMyData() {
   try {
     localStorage.removeItem(KEY);
+    localStorage.removeItem(OLD_KEY);
     localStorage.removeItem(SESSIONS);
   } catch {
     // nothing to delete

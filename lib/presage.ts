@@ -8,12 +8,13 @@ type Detection = { detected?: boolean; timestamp?: number };
 type Reading = { value?: number; timestamp?: number };
 type DecodedMetrics = {
   breathing?: { rate?: Reading[] };
+  cardio?: { pulseRate?: Reading[] };
   face?: { blinking?: Detection[]; talking?: Detection[] };
 };
 
 export const MISSING_KEY = "MISSING_KEY";
 
-// Turns any error into a short, plain message for the screen.
+// Turns a start-up error into a short, plain message for the screen.
 export function friendlyError(err: unknown): string {
   const text =
     err instanceof Error ? `${err.name} ${err.message}` : String(err);
@@ -32,8 +33,18 @@ export function friendlyError(err: unknown): string {
   return "We couldn't start your session. Please try again.";
 }
 
+// Turns an error that happens WHILE measuring into a gentle note.
+function runtimeMessage(code: number): string {
+  if (code === 2) return "Presage did not accept the API key.";
+  if (code === 4) return "The Presage free credits have run out.";
+  if (code === 5)
+    return "The connection to Presage was lost. Please check your internet.";
+  if (code === 7) return "The camera stopped sending pictures.";
+  return "The measurement had a small hiccup. Keep your face and chest in view and it should recover.";
+}
+
 // Connects the app to Presage SmartSpectra. This is the ONLY file that
-// knows about the SDK. Face + breathing readings are requested.
+// knows about the SDK. Face, breathing and pulse readings are requested.
 export function createPresageProvider(
   handlers: SignalHandlers,
 ): SignalProvider {
@@ -50,7 +61,11 @@ export function createPresageProvider(
 
     const instance = new renderer.SmartSpectraSDK({
       apiKey: PRESAGE_API_KEY,
-      requestedMetrics: [...renderer.breathingMetrics, ...renderer.faceMetrics],
+      requestedMetrics: [
+        ...renderer.breathingMetrics,
+        ...renderer.cardioMetrics,
+        ...renderer.faceMetrics,
+      ],
       enableAccumulatedOutput: false,
       enableTelemetry: false, // no usage data is sent to Presage
     });
@@ -82,18 +97,19 @@ export function createPresageProvider(
           Number(blinking.timestamp ?? 0),
         );
       }
-      const breathing = metrics.breathing?.rate?.at(-1);
-      if (breathing && typeof breathing.value === "number") {
-        handlers.onBreathingRateReceived?.(
-          breathing.value,
-          Number(breathing.timestamp ?? 0),
-        );
+      for (const r of metrics.breathing?.rate ?? []) {
+        if (typeof r.value === "number" && r.value > 0)
+          handlers.onBreathingRateReceived?.(r.value, Number(r.timestamp ?? 0));
+      }
+      for (const r of metrics.cardio?.pulseRate ?? []) {
+        if (typeof r.value === "number" && r.value > 0)
+          handlers.onPulseRateReceived?.(r.value, Number(r.timestamp ?? 0));
       }
     });
 
     instance.on("error", (code, message) => {
-      console.error("[presage]", code, message);
-      handlers.onError?.(friendlyError(`${code} ${message}`));
+      console.warn("[presage]", code, message);
+      handlers.onError?.(runtimeMessage(Number(code)));
     });
 
     return instance;

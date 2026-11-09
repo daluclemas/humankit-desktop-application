@@ -35,13 +35,13 @@ function createWindow() {
     });
 }
 electron_1.app.whenReady().then(() => {
-    // Camera only, and only for our own pages. Everything else is refused.
+    // Camera and microphone only, and only for our own pages. Everything else is refused.
     electron_1.session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
         const url = details?.requestingUrl || webContents.getURL() || "";
         const ourPage = url.startsWith("file://") || (isDev && url.startsWith(DEV_URL));
         const mediaTypes = details.mediaTypes ?? [];
-        const cameraOnly = mediaTypes.length === 1 && mediaTypes[0] === "video";
-        callback(permission === "media" && cameraOnly && ourPage);
+        const cameraOrMic = mediaTypes.every((type) => type === "video" || type === "audio");
+        callback(permission === "media" && cameraOrMic && ourPage);
     });
     electron_1.ipcMain.handle("app:get-version", () => electron_1.app.getVersion());
     createWindow();

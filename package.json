@@ -7,13 +7,36 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "electron:dev": "concurrently -k \"pnpm dev\" \"wait-on http://localhost:3000 && electron .\"",
-    "desktop:build": "pnpm build && electron-builder",
-    "desktop:win": "pnpm build && electron-builder --win nsis",
-    "desktop:mac": "pnpm build && electron-builder --mac dmg"
+    "electron:dev": "pnpm electron:compile && concurrently -k \"pnpm dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "desktop:build": "pnpm build && pnpm electron:compile && electron-builder",
+    "desktop:win": "pnpm build && pnpm electron:compile && electron-builder --win nsis",
+    "desktop:mac": "pnpm build && pnpm electron:compile && electron-builder --mac dmg",
+    "electron:compile": "tsc -p electron/tsconfig.json"
   },
-  "main": "dist-electron/main.js", 
-  "build": { "appId": "com.humankit.app", "productName": "HumanKit", "files": ["out/**/*", "dist-electron/**/*", "package.json"], "win": { "target": ["nsis"] }, "mac": { "target": ["dmg"], "category": "public.app-category.healthcare-fitness" }, "directories": { "output": "release" } },
+  "main": "dist-electron/main.js",
+  "build": {
+    "appId": "com.humankit.app",
+    "productName": "HumanKit",
+    "files": [
+      "out/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.healthcare-fitness"
+    },
+    "directories": {
+      "output": "release"
+    }
+  },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
     "@vercel/analytics": "1.6.1",

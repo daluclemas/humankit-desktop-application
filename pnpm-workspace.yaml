@@ -1,10 +1,12 @@
 pmOnFail: ignore
 
 minimumReleaseAgeExclude:
-  - '@next/*'
+  - "@next/*"
   - next
 
 allowBuilds:
   electron: true
   electron-winstaller: true
   esbuild: true
+  koffi: true
+  protobufjs: true

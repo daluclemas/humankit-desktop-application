@@ -1,3 +1,31 @@
-export type SignalStatus = 'not-connected' | 'waiting' | 'available' | 'unavailable'
-export interface SignalProvider { start(): Promise<void>; stop(): Promise<void> }
-export interface SignalSnapshot { status: SignalStatus; value?: number; timestamp: number }
+export type SignalStatus =
+  | "not-connected"
+  | "waiting"
+  | "available"
+  | "unavailable";
+
+export interface SignalSnapshot {
+  status: SignalStatus;
+  value?: number;
+  timestamp: number;
+}
+
+// The places where future measurements arrive. The screens only know about
+// these three names, never about Presage itself.
+export interface SignalHandlers {
+  onTalkingDetected?: (talking: boolean, timestampUs: number) => void;
+  onBlinkDetected?: (blinking: boolean, timestampUs: number) => void;
+  onBreathingRateReceived?: (
+    breathsPerMinute: number,
+    timestampUs: number,
+  ) => void;
+  onStream?: (stream: MediaStream | null) => void;
+  onHint?: (message: string) => void;
+  onError?: (message: string) => void;
+}
+
+export interface SignalProvider {
+  start(): Promise<void>;
+  stop(): Promise<void>;
+  destroy(): void;
+}

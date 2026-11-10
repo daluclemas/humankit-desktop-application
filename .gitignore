@@ -7,6 +7,9 @@
 /.next/
 /out/
 
+# compiled Electron files (made by pnpm electron:compile)
+/dist-electron/
+
 # production
 /build
 
@@ -16,8 +19,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files
+# env files (keep the example file)
 .env*
+!.env.example
 
 # vercel
 .vercel

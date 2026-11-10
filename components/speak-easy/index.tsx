@@ -12,7 +12,11 @@ import {
   ArrowRight,
   RotateCcw,
 } from "lucide-react";
-import { createPresageProvider, friendlyError } from "@/lib/presage";
+import {
+  createPresageProvider,
+  describeValidation,
+  friendlyError,
+} from "@/lib/presage";
 import {
   GROQ_API_KEY,
   friendlyAiError,
@@ -45,6 +49,7 @@ import type { SignalProvider } from "@/types/signals";
 type Phase =
   | "setup"
   | "generating"
+  | "position"
   | "baseline"
   | "ready"
   | "answering"
@@ -72,7 +77,11 @@ export default function SpeakEasyCoach() {
   const [count, setCount] = useState(3);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [hint, setHint] = useState("");
+  const [validation, setValidation] = useState<{
+    code: number | null;
+    hint: string;
+  }>({ code: null, hint: "" });
+  const [counts, setCounts] = useState({ breath: 0, pulse: 0 });
   const [askConsent, setAskConsent] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
   const [micOn, setMicOn] = useState(false);
@@ -132,7 +141,7 @@ export default function SpeakEasyCoach() {
             if (s) video.current.play().catch(() => {});
           }
         },
-        onHint: setHint,
+        onValidation: (code, h) => setValidation({ code, hint: h }),
         onError: setNotice,
       });
     }
@@ -150,17 +159,17 @@ export default function SpeakEasyCoach() {
 
   // Once a second: refresh the charts and timers.
   const running =
+    phase === "position" ||
     phase === "baseline" ||
     phase === "ready" ||
     phase === "answering" ||
     phase === "processing" ||
     phase === "feedback";
   useEffect(() => {
-    // localStorage.removeItem("humankit-consent-v2");
-    // localStorage.removeItem("humankit-camera-consent");
     if (!running) return;
     const id = setInterval(() => {
       setElapsed(now());
+      setCounts({ breath: breath.current.length, pulse: pulse.current.length });
       setCharts({
         breath: [...breath.current],
         pulse: [...pulse.current],
@@ -218,7 +227,8 @@ export default function SpeakEasyCoach() {
     setElapsed(0);
     setAnswerElapsed(0);
     setNotice("");
-    setHint("");
+    setValidation({ code: null, hint: "" });
+    setCounts({ breath: 0, pulse: 0 });
     setError("");
   }
 
@@ -253,6 +263,17 @@ export default function SpeakEasyCoach() {
       setPhase("setup");
       return;
     }
+    setPhase("position");
+  }
+
+  // Starts the 25-second resting measurement, after the person is in position.
+  function beginBaseline() {
+    breath.current = [];
+    pulse.current = [];
+    talkLog.current = [];
+    windows.current = [];
+    t0.current = Date.now();
+    setElapsed(0);
     setBaselineLeft(BASELINE_MS);
     setPhase("baseline");
   }
@@ -602,6 +623,38 @@ export default function SpeakEasyCoach() {
                     playsInline
                     className={`absolute inset-0 h-full w-full -scale-x-100 object-cover ${cameraOn ? "" : "hidden"}`}
                   />
+                  {phase === "position" && cameraOn && (
+                    <svg
+                      className="pointer-events-none absolute inset-0 h-full w-full"
+                      viewBox="0 0 160 90"
+                      preserveAspectRatio="none"
+                      aria-hidden="true"
+                    >
+                      <ellipse
+                        cx="80"
+                        cy="30"
+                        rx="15"
+                        ry="20"
+                        fill="none"
+                        stroke="white"
+                        strokeWidth="1"
+                        strokeDasharray="3 3"
+                        opacity="0.8"
+                      />
+                      <rect
+                        x="30"
+                        y="54"
+                        width="100"
+                        height="40"
+                        rx="12"
+                        fill="none"
+                        stroke="white"
+                        strokeWidth="1"
+                        strokeDasharray="3 3"
+                        opacity="0.8"
+                      />
+                    </svg>
+                  )}
                   {!cameraOn && <Camera size={28} className="text-white/60" />}
                   {inSession && (
                     <span className="absolute left-3 top-3 rounded-full bg-black/50 px-3 py-1 text-xs font-medium text-white">
@@ -613,10 +666,55 @@ export default function SpeakEasyCoach() {
                     </span>
                   )}
                 </div>
-                {hint && inSession && (
-                  <p className="mt-3 text-xs text-[#8992a6]">Tip: {hint}</p>
+                {inSession && validation.code !== null && (
+                  <div className="mt-3 text-xs">
+                    <p
+                      className={`font-semibold ${validation.code === 0 ? "text-[#287d70]" : "text-[#b4532f]"}`}
+                    >
+                      {describeValidation(validation.code)}
+                    </p>
+                    {validation.code !== 0 && validation.hint && (
+                      <p className="mt-1 text-[#8992a6]">
+                        Presage says: {validation.hint}
+                      </p>
+                    )}
+                    <p className="mt-1 text-[11px] text-[#a3aaba]">
+                      Readings received: breathing {counts.breath} · pulse{" "}
+                      {counts.pulse}
+                    </p>
+                  </div>
                 )}
               </section>
+            )}
+
+            {phase === "position" && (
+              <Card>
+                <h2 className="text-lg font-semibold">Get into position</h2>
+                <p className="mt-2 text-sm leading-6 text-[#718096]">
+                  Sit back so your head and shoulders fit inside the dashed
+                  shapes, with your upper chest showing. Put the light in front
+                  of you, not behind you, and hold still.
+                </p>
+                <div className="mt-5 flex items-center gap-4">
+                  <button
+                    onClick={beginBaseline}
+                    disabled={validation.code !== 0}
+                    className="rounded-xl px-5 py-3 text-sm font-semibold text-white disabled:opacity-40"
+                    style={{ background: ACCENT }}
+                  >
+                    I&apos;m in position
+                  </button>
+                  <button
+                    onClick={beginBaseline}
+                    className="text-xs font-semibold text-[#8992a6] underline"
+                  >
+                    Continue anyway
+                  </button>
+                </div>
+                <p className="mt-3 text-xs text-[#8992a6]">
+                  The button turns on when Presage says the picture is good.
+                </p>
+              </Card>
             )}
 
             {phase === "baseline" && (
@@ -802,17 +900,27 @@ function List({ items, color }: { items: string[]; color: string }) {
 }
 
 function Composure({ a }: { a: AnswerResult }) {
-  const l = LEVELS[a.level];
+  // If Presage gave no breathing or pulse readings, we must not say "steady".
+  const measured = a.breathAvg !== null || a.pulseAvg !== null;
+  const l = measured
+    ? LEVELS[a.level]
+    : { label: "Pace and pauses only", color: "#4a5568", bg: "#f3f4f8" };
   return (
     <div className="rounded-xl p-4" style={{ background: l.bg }}>
       <p className="text-sm font-semibold" style={{ color: l.color }}>
         Body and pace: {l.label}
       </p>
-      {a.flags.length > 0 ? (
-        <List items={a.flags} color={l.color} />
-      ) : (
+      {a.flags.length > 0 && <List items={a.flags} color={l.color} />}
+      {a.flags.length === 0 && (
         <p className="mt-2 text-sm text-[#39415a]">
-          Your breathing, pulse and pace looked steady for this answer.
+          {measured
+            ? "Your breathing, pulse and pace looked steady for this answer."
+            : "Breathing and pulse could not be measured for this answer, so only your pace and pauses were checked. Nothing stood out."}
+        </p>
+      )}
+      {!measured && a.flags.length > 0 && (
+        <p className="mt-2 text-xs text-[#718096]">
+          Breathing and pulse could not be measured for this answer.
         </p>
       )}
       <p className="mt-3 text-[11px] text-[#718096]">

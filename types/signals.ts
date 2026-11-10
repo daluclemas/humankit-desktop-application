@@ -22,6 +22,7 @@ export interface SignalHandlers {
   onPulseRateReceived?: (beatsPerMinute: number, timestampUs: number) => void;
   onStream?: (stream: MediaStream | null) => void;
   onHint?: (message: string) => void;
+  onValidation?: (code: number, hint: string) => void;
   onError?: (message: string) => void;
 }
 

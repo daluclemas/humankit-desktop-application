@@ -33,16 +33,7 @@ export function friendlyError(err: unknown): string {
   return "We couldn't start your session. Please try again.";
 }
 
-// Turns an error that happens WHILE measuring into a gentle note.
-function runtimeMessage(code: number): string {
-  if (code === 2) return "Presage did not accept the API key.";
-  if (code === 4) return "The Presage free credits have run out.";
-  if (code === 5)
-    return "The connection to Presage was lost. Please check your internet.";
-  if (code === 7) return "The camera stopped sending pictures.";
-  return "The measurement had a small hiccup. Keep your face and chest in view and it should recover.";
-}
-
+// Says in plain English what Presage needs from the picture.
 export function describeValidation(code: number): string {
   switch (code) {
     case 0:
@@ -82,10 +73,21 @@ export function describeValidation(code: number): string {
   }
 }
 
+// Turns an error that happens WHILE measuring into a gentle note.
+function runtimeMessage(code: number): string {
+  if (code === 2) return "Presage did not accept the API key.";
+  if (code === 4) return "The Presage free credits have run out.";
+  if (code === 5)
+    return "The connection to Presage was lost. Please check your internet.";
+  if (code === 7) return "The camera stopped sending pictures.";
+  return "The measurement had a small hiccup. Keep your face and chest in view and it should recover.";
+}
+
 // Connects the app to Presage SmartSpectra. This is the ONLY file that
 // knows about the SDK. Face, breathing and pulse readings are requested.
 export function createPresageProvider(
   handlers: SignalHandlers,
+  options: { faceOnly?: boolean } = {},
 ): SignalProvider {
   let sdk: import("@smartspectra/node-sdk/renderer").SmartSpectraSDK | null =
     null;
@@ -127,18 +129,22 @@ export function createPresageProvider(
 
     const instance = new renderer.SmartSpectraSDK({
       apiKey: PRESAGE_API_KEY,
-      requestedMetrics: [
-        ...renderer.breathingMetrics,
-        ...renderer.cardioMetrics,
-        ...renderer.faceMetrics,
-      ],
+      // ScreenBreak only needs the face (blinking), so it asks for less.
+      requestedMetrics: options.faceOnly
+        ? [...renderer.faceMetrics]
+        : [
+            ...renderer.breathingMetrics,
+            ...renderer.cardioMetrics,
+            ...renderer.faceMetrics,
+          ],
       enableAccumulatedOutput: false,
       enableTelemetry: false, // no usage data is sent to Presage
     });
 
     instance.on("streamAvailable", (stream) => handlers.onStream?.(stream));
 
-    instance.on("validationStatus", (_code, _ts, hint) => {
+    instance.on("validationStatus", (code, _ts, hint) => {
+      handlers.onValidation?.(Number(code), hint ?? "");
       if (hint) handlers.onHint?.(hint);
     });
 
@@ -191,7 +197,7 @@ export function createPresageProvider(
         "[presage] camera running at",
         settings?.frameRate,
         "fps",
-        settings?.width + "x" + settings?.height,
+        `${settings?.width}x${settings?.height}`,
       );
       sdk.useMediaStream(ownStream);
       handlers.onStream?.(ownStream);

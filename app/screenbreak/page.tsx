@@ -1,4 +1,5 @@
-import ToolPage from "../../components/tool-page";
+import ScreenBreakSession from "@/components/screen-break";
+
 export default function Page() {
-  return <ToolPage kind="screenbreak" />;
+  return <ScreenBreakSession />;
 }

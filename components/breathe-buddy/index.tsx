@@ -347,7 +347,7 @@ export default function BreatheBuddySession() {
     <div className="mx-auto max-w-6xl">
       <Link
         href="/dashboard"
-        className="mb-7 flex items-center gap-2 text-sm font-medium text-[#718096]"
+        className="my-7 flex items-center gap-2 text-sm font-medium text-[#718096]"
       >
         <ArrowLeft size={15} /> Back to dashboard
       </Link>

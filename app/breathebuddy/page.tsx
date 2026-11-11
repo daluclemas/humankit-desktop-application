@@ -1,2 +1,5 @@
-import ToolPage from '../../components/tool-page'
-export default function Page(){return <ToolPage kind="breathebuddy"/>}
+import BreatheBuddySession from "@/components/breathe-buddy";
+
+export default function Page() {
+  return <BreatheBuddySession />;
+}

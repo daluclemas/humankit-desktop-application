@@ -20,6 +20,8 @@ export interface SignalHandlers {
     timestampUs: number,
   ) => void;
   onPulseRateReceived?: (beatsPerMinute: number, timestampUs: number) => void;
+  // The live chest-movement wave. Each value rises and falls as you breathe.
+  onBreathTrace?: (value: number, timestampUs: number) => void;
   onStream?: (stream: MediaStream | null) => void;
   onHint?: (message: string) => void;
   onValidation?: (code: number, hint: string) => void;

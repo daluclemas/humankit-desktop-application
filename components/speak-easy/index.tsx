@@ -58,7 +58,10 @@ type Phase =
   | "summarizing"
   | "done";
 
-const BASELINE_MS = 25000;
+// const BASELINE_MS = 25000;
+const BREATHING_WINDOW_MS = 30000;
+const PULSE_WINDOW_MS = 12000;
+const BASELINE_MS = 40000;
 const ACCENT = "#6958d9";
 const LEVELS: Record<Level, { label: string; color: string; bg: string }> = {
   steady: { label: "Steady", color: "#287d70", bg: "#e6f6f2" },
@@ -201,15 +204,37 @@ export default function SpeakEasyCoach() {
     };
   }, []);
 
+  // function finishBaseline() {
+  //   const inRange = (list: Sample[]) =>
+  //     list.filter((s) => s.t >= 5000 && s.t <= BASELINE_MS).map((s) => s.v);
+  //   const b = inRange(breath.current);
+  //   const p = inRange(pulse.current);
+  //   setBaseline({
+  //     breath: b.length >= 2 ? median(b) : null,
+  //     pulse: p.length >= 2 ? median(p) : null,
+  //   });
+  //   setPhase("ready");
+  // }
+
   function finishBaseline() {
-    const inRange = (list: Sample[]) =>
-      list.filter((s) => s.t >= 5000 && s.t <= BASELINE_MS).map((s) => s.v);
-    const b = inRange(breath.current);
-    const p = inRange(pulse.current);
+    const breathingSamples = breath.current
+      .filter(
+        (sample) => sample.t >= BREATHING_WINDOW_MS && sample.t <= BASELINE_MS,
+      )
+      .map((sample) => sample.v);
+
+    const pulseSamples = pulse.current
+      .filter(
+        (sample) => sample.t >= PULSE_WINDOW_MS && sample.t <= BASELINE_MS,
+      )
+      .map((sample) => sample.v);
+
     setBaseline({
-      breath: b.length >= 2 ? median(b) : null,
-      pulse: p.length >= 2 ? median(p) : null,
+      breath: breathingSamples.length >= 2 ? median(breathingSamples) : null,
+
+      pulse: pulseSamples.length >= 2 ? median(pulseSamples) : null,
     });
+
     setPhase("ready");
   }
 
@@ -580,9 +605,14 @@ export default function SpeakEasyCoach() {
               Sit so your face and chest are in the picture, with good light in
               front of you.
             </li>
-            <li>
+            {/* <li>
               First you sit quietly for 25 seconds so we can see your resting
               level.
+            </li> */}
+            <li>
+              First, sit quietly for 40 seconds. Breathing needs a full
+              30-second measurement window, and we use extra time to collect
+              valid readings.
             </li>
             <li>Then you answer out loud, like a real interview.</li>
           </ul>

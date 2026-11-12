@@ -24,7 +24,9 @@ import CameraConsent from "@/components/CameraConsent";
 
 const ACCENT = "#e49a43";
 const SOFT = "#fff0dc";
-const LEAD_IN = 8; // seconds to get comfortable before the first breath
+// const LEAD_IN = 8; // seconds to get comfortable before the first breath
+const CAMERA_WARMUP_SECONDS = 40;
+const NO_CAMERA_LEAD_IN_SECONDS = 8;
 const SYNC_WINDOW = 1.5; // breaths a minute: how close counts as "in sync"
 
 type Phase = "setup" | "running" | "summary";
@@ -233,52 +235,121 @@ export default function BreatheBuddySession() {
     setLabel({ phase: f.phase, sec: Math.ceil(f.secondsLeft) });
   }, []);
 
+  // async function begin() {
+  //   setNotice("");
+  //   if (useCamera && !hasCameraConsent()) {
+  //     setConsentOpen(true);
+  //     return;
+  //   }
+  //   const pattern =
+  //     PATTERNS.find(
+  //       (p: ConstructorParameters<typeof Pacer>[0]) => p.id === patternId,
+  //     ) ?? PATTERNS[1];
+  //   measured.current = [];
+  //   guideSeries.current = [];
+  //   lastGuideIdx.current = -1;
+  //   syncSec.current = 0;
+  //   trace.current = [];
+  //   userFill.current = null;
+  //   finishing.current = false;
+  //   pausedRef.current = false;
+  //   pacer.current = new Pacer(
+  //     pattern,
+  //     LEAD_IN,
+  //     () => {
+  //       const v = median(measured.current.slice(-8).map((m) => m.v));
+  //       return measured.current.length >= 3 ? v : null;
+  //     },
+  //     durationSec,
+  //   );
+  //   sound.current?.stop();
+  //   sound.current = createBreathSound();
+  //   sound.current.start();
+  //   setSnap({ ...EMPTY, left: durationSec });
+  //   setPaused(false);
+  //   setFinal(null);
+  //   setLabel(null);
+  //   setValidation(null);
+  //   setPhase("running");
+  //   if (useCamera) {
+  //     try {
+  //       await getProvider().start();
+  //     } catch (err) {
+  //       console.warn(err);
+  //       setNotice(
+  //         `${friendlyError(err)} The guide still works without the camera.`,
+  //       );
+  //     }
+  //   }
+  // }
+
   async function begin() {
     setNotice("");
+
     if (useCamera && !hasCameraConsent()) {
       setConsentOpen(true);
       return;
     }
+
     const pattern =
       PATTERNS.find(
         (p: ConstructorParameters<typeof Pacer>[0]) => p.id === patternId,
       ) ?? PATTERNS[1];
+
     measured.current = [];
     guideSeries.current = [];
     lastGuideIdx.current = -1;
     syncSec.current = 0;
     trace.current = [];
     userFill.current = null;
+    lastTraceAt.current = 0;
     finishing.current = false;
     pausedRef.current = false;
+
+    let cameraStarted = false;
+
+    // Start the camera and SDK BEFORE starting the guide's warm-up.
+    if (useCamera) {
+      try {
+        await getProvider().start();
+        cameraStarted = true;
+      } catch (err) {
+        console.warn(err);
+
+        setNotice(
+          `${friendlyError(err)} The guide will still work without camera measurements.`,
+        );
+      }
+    }
+
+    const leadIn = cameraStarted
+      ? CAMERA_WARMUP_SECONDS
+      : NO_CAMERA_LEAD_IN_SECONDS;
+
     pacer.current = new Pacer(
       pattern,
-      LEAD_IN,
+      leadIn,
       () => {
-        const v = median(measured.current.slice(-8).map((m) => m.v));
-        return measured.current.length >= 3 ? v : null;
+        const values = measured.current
+          .slice(-8)
+          .map((measurement) => measurement.v);
+
+        return values.length >= 2 ? median(values) : null;
       },
       durationSec,
     );
+
     sound.current?.stop();
     sound.current = createBreathSound();
     sound.current.start();
+
     setSnap({ ...EMPTY, left: durationSec });
     setPaused(false);
     setFinal(null);
     setLabel(null);
     setValidation(null);
+
     setPhase("running");
-    if (useCamera) {
-      try {
-        await getProvider().start();
-      } catch (err) {
-        console.warn(err);
-        setNotice(
-          `${friendlyError(err)} The guide still works without the camera.`,
-        );
-      }
-    }
   }
 
   function finish(completed: boolean) {
@@ -374,7 +445,7 @@ export default function BreatheBuddySession() {
       <div className="grid gap-5 lg:grid-cols-[1.6fr_1fr]">
         {/* ---------- THE ORB ---------- */}
         <section
-          className="relative h-[460px] overflow-hidden rounded-3xl sm:h-[580px]"
+          className="relative h-115 overflow-hidden rounded-3xl sm:h-145"
           style={{
             background:
               "radial-gradient(ellipse at 50% 42%, #1c1a4a 0%, #0c0e26 55%, #070816 100%)",
@@ -401,14 +472,20 @@ export default function BreatheBuddySession() {
               <p className="text-lg font-semibold tracking-wide sm:text-xl">
                 {caption ?? (showWord ? WORDS[label.phase] : "")}
               </p>
-              {showWord &&
+              {/* {showWord &&
                 label.phase !== "ready" &&
                 label.sec > 0 &&
                 !paused && (
                   <p className="mt-1 text-5xl font-extralight tabular-nums">
                     {label.sec}
                   </p>
-                )}
+                )} */}
+
+              {showWord && label.sec > 0 && !paused && (
+                <p className="mt-1 text-5xl font-extralight tabular-nums">
+                  {label.sec}
+                </p>
+              )}
               {paused && <p className="mt-2 text-sm text-white/70">Paused</p>}
             </div>
           </div>
@@ -562,8 +639,11 @@ export default function BreatheBuddySession() {
                           : describeValidation(validation)}
                       </p>
                       <p className="mt-1 text-[#8992a6]">
-                        {snap.readings === 0
+                        {/* {snap.readings === 0
                           ? "No breathing readings yet. This can take about 20 seconds."
+                          : `Breathing readings: ${snap.readings}`} */}
+                        {snap.readings === 0
+                          ? "Breathing measurements need a full 30-second camera window. Please keep your face and chest visible and stay still."
                           : `Breathing readings: ${snap.readings}`}
                       </p>
                     </div>

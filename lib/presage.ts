@@ -5,7 +5,13 @@ export const PRESAGE_API_KEY = process.env.NEXT_PUBLIC_PRESAGE_API_KEY ?? "";
 
 // The small part of the SDK's answer that we read.
 type Detection = { detected?: boolean; timestamp?: number };
-type Reading = { value?: number; timestamp?: number };
+// type Reading = { value?: number; timestamp?: number };
+type Reading = {
+  value?: number;
+  timestamp?: number;
+  confidence?: number;
+  stable?: boolean;
+};
 type DecodedMetrics = {
   breathing?: {
     rate?: Reading[];
@@ -175,21 +181,63 @@ export function createPresageProvider(
           Number(blinking.timestamp ?? 0),
         );
       }
+      // for (const r of metrics.breathing?.rate ?? []) {
+      //   if (typeof r.value === "number" && r.value > 0)
+      //     handlers.onBreathingRateReceived?.(r.value, Number(r.timestamp ?? 0));
+      // }
+
       for (const r of metrics.breathing?.rate ?? []) {
-        if (typeof r.value === "number" && r.value > 0)
-          handlers.onBreathingRateReceived?.(r.value, Number(r.timestamp ?? 0));
+        const valid =
+          typeof r.value === "number" &&
+          r.value >= 5 &&
+          r.value <= 40 &&
+          typeof r.confidence === "number" &&
+          r.confidence > 0 &&
+          r.stable === true;
+
+        if (valid) {
+          handlers.onBreathingRateReceived?.(
+            r.value!,
+            Number(r.timestamp ?? 0),
+          );
+        }
       }
       // The chest wave (falls back to the belly wave if the chest one is empty).
       const wave = metrics.breathing?.upperTrace?.length
         ? metrics.breathing.upperTrace
         : metrics.breathing?.lowerTrace;
+      // for (const r of wave ?? []) {
+      //   if (typeof r.value === "number")
+      //     handlers.onBreathTrace?.(r.value, Number(r.timestamp ?? 0));
+      // }
       for (const r of wave ?? []) {
-        if (typeof r.value === "number")
-          handlers.onBreathTrace?.(r.value, Number(r.timestamp ?? 0));
+        const valid =
+          typeof r.value === "number" &&
+          typeof r.confidence === "number" &&
+          r.confidence > 0 &&
+          r.stable !== false;
+
+        if (valid) {
+          handlers.onBreathTrace?.(r.value!, Number(r.timestamp ?? 0));
+        }
       }
+      // for (const r of metrics.cardio?.pulseRate ?? []) {
+      //   if (typeof r.value === "number" && r.value > 0)
+      //     handlers.onPulseRateReceived?.(r.value, Number(r.timestamp ?? 0));
+      // }
+
       for (const r of metrics.cardio?.pulseRate ?? []) {
-        if (typeof r.value === "number" && r.value > 0)
-          handlers.onPulseRateReceived?.(r.value, Number(r.timestamp ?? 0));
+        const valid =
+          typeof r.value === "number" &&
+          r.value >= 40 &&
+          r.value <= 110 &&
+          typeof r.confidence === "number" &&
+          r.confidence > 0 &&
+          r.stable === true;
+
+        if (valid) {
+          handlers.onPulseRateReceived?.(r.value!, Number(r.timestamp ?? 0));
+        }
       }
     });
 

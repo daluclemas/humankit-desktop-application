@@ -3,6 +3,7 @@ const KEY = "humankit-consent-v2";
 const OLD_KEY = "humankit-camera-consent";
 const SESSIONS = "humankit-sessions";
 
+
 export function hasCameraConsent(): boolean {
   try {
     return localStorage.getItem(KEY) !== null;

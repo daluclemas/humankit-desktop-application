@@ -177,6 +177,10 @@ function Dashboard() {
   const [now, setNow] = useState<Date | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   useEffect(() => {
+    // localStorage.removeItem("humankit-camera-consent"); // remove old key if present
+    // localStorage.removeItem("humankit-sessions"); // remove old sessions if present
+    // localStorage.removeItem("humankit-consent-v2"); // remove old key if present
+
     setNow(new Date());
     try {
       const list = JSON.parse(

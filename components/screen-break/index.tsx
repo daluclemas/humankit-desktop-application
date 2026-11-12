@@ -1,4 +1,5 @@
 "use client";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Coffee, Eye, Play, Square } from "lucide-react";
@@ -14,11 +15,11 @@ import CameraConsent from "@/components/CameraConsent";
 const ACCENT = "#2fae9e";
 const SOFT = "#ddf5f0";
 const BREAK_SECONDS = 20;
-const LOW_RATE = 8; // blinks per minute that we call "slow"
-const LONG_GAP = 15; // seconds without a blink that we call "a long stare"
+const LOW_RATE = 8;
+const LONG_GAP = 15;
 
 type Phase = "setup" | "starting" | "running" | "summary";
-type Point = { t: number; v: number }; // t = seconds since start
+type Point = { t: number; v: number };
 
 interface Snap {
   elapsed: number;
@@ -85,78 +86,102 @@ export default function ScreenBreakSession() {
   const breakEnd = useRef<number | null>(null);
   const nextBreakAt = useRef(0);
 
-  // Presage tells us here what it sees.
   const getProvider = useCallback(() => {
     if (!provider.current) {
       provider.current = createPresageProvider(
         {
           onBlinkDetected: (blinking) => {
-            const n = Date.now();
-            if (!signalSeen.current) {
-              signalSeen.current = true;
-              lastBlinkAt.current = n;
-            }
-            lastSignalAt.current = n;
-            // A blink = the moment the eyes go from open to closed.
+            const now = Date.now();
+
+            signalSeen.current = true;
+            lastSignalAt.current = now;
+
             if (blinking && !lastBlinking.current) {
-              blinkTimes.current.push(n);
+              blinkTimes.current.push(now);
+
               longestGap.current = Math.max(
                 longestGap.current,
-                (n - lastBlinkAt.current) / 1000,
+                (now - lastBlinkAt.current) / 1000,
               );
-              lastBlinkAt.current = n;
+
+              lastBlinkAt.current = now;
             }
+
             lastBlinking.current = blinking;
           },
+
           onStream: (s) => {
             stream.current = s;
+
             if (video.current) {
               video.current.srcObject = s;
-              if (s) video.current.play().catch(() => {});
+
+              if (s) {
+                video.current.play().catch(() => {});
+              }
             }
           },
-          onValidation: (code, hint) => setValidation({ code, hint }),
-          onError: setNotice,
+
+          onValidation: (code, hint) => {
+            setValidation({ code, hint });
+          },
+
+          onError: (message) => {
+            setNotice(message);
+          },
         },
         { faceOnly: true },
       );
     }
+
     return provider.current;
   }, []);
 
-  // The <video> appears after the screen changes, so connect the saved
-  // stream to it as soon as it is on the page.
+  // Connect the camera stream when the video element appears.
   useEffect(() => {
-    const el = video.current;
-    if (!el || !stream.current) return;
-    if (el.srcObject !== stream.current) el.srcObject = stream.current;
-    el.play().catch(() => {});
-  }, [phase]);
+    const element = video.current;
 
-  // Work out the numbers (also used for the final summary).
-  const measure = useCallback((): Snap => {
-    const n = Date.now();
-    const elapsed = (n - t0.current) / 1000;
+    if (!element || !stream.current) return;
 
-    // Break timing
-    if (breakEnd.current === null && n >= nextBreakAt.current) {
-      breakEnd.current = n + BREAK_SECONDS * 1000;
-    } else if (breakEnd.current !== null && n >= breakEnd.current) {
-      breakEnd.current = null;
-      breaks.current += 1;
-      nextBreakAt.current = n + intervalMs.current;
+    if (element.srcObject !== stream.current) {
+      element.srcObject = stream.current;
     }
 
-    const signalOk = n - lastSignalAt.current < 4000;
-    const win = Math.min(60, elapsed);
-    const recent = blinkTimes.current.filter((t) => n - t <= 60000).length;
-    const rate = signalSeen.current && win >= 20 ? (recent * 60) / win : null;
+    element.play().catch(() => {});
+  }, [phase]);
 
-    const gapNow = signalOk ? (n - lastBlinkAt.current) / 1000 : 0;
+  const measure = useCallback((): Snap => {
+    const now = Date.now();
+    const elapsed = (now - t0.current) / 1000;
+
+    // Break timing.
+    if (breakEnd.current === null && now >= nextBreakAt.current) {
+      breakEnd.current = now + BREAK_SECONDS * 1000;
+    } else if (breakEnd.current !== null && now >= breakEnd.current) {
+      breakEnd.current = null;
+      breaks.current += 1;
+      nextBreakAt.current = now + intervalMs.current;
+    }
+
+    const signalOk = now - lastSignalAt.current < 4000;
+    const windowSeconds = Math.min(60, elapsed);
+
+    const recentBlinks = blinkTimes.current.filter(
+      (time) => now - time <= 60000,
+    ).length;
+
+    const rate =
+      signalSeen.current && windowSeconds >= 20
+        ? (recentBlinks * 60) / windowSeconds
+        : null;
+
+    const gapNow = signalOk ? (now - lastBlinkAt.current) / 1000 : 0;
+
     longestGap.current = Math.max(longestGap.current, gapNow);
 
-    const last = series.current.at(-1);
-    if (rate !== null && (!last || elapsed - last.t >= 5)) {
+    const lastPoint = series.current.at(-1);
+
+    if (rate !== null && (!lastPoint || elapsed - lastPoint.t >= 5)) {
       series.current.push({ t: elapsed, v: rate });
     }
 
@@ -168,9 +193,9 @@ export default function ScreenBreakSession() {
       longestGap: longestGap.current,
       breaks: breaks.current,
       skipped: skipped.current,
-      nextIn: Math.max(0, (nextBreakAt.current - n) / 1000),
+      nextIn: Math.max(0, (nextBreakAt.current - now) / 1000),
       onBreak: breakEnd.current !== null,
-      breakLeft: breakEnd.current ? (breakEnd.current - n) / 1000 : 0,
+      breakLeft: breakEnd.current ? (breakEnd.current - now) / 1000 : 0,
       signalOk,
       series: [...series.current],
     };
@@ -178,24 +203,36 @@ export default function ScreenBreakSession() {
 
   useEffect(() => {
     if (phase !== "running") return;
-    const id = setInterval(() => setSnap(measure()), 1000);
+
+    const id = setInterval(() => {
+      setSnap(measure());
+    }, 1000);
+
     return () => clearInterval(id);
   }, [phase, measure]);
 
-  // Stop the camera when leaving the page.
+  // Destroy the SDK and camera if the user leaves this screen.
   useEffect(() => {
-    return () => provider.current?.destroy();
+    return () => {
+      provider.current?.destroy();
+      provider.current = null;
+      stream.current = null;
+    };
   }, []);
 
   async function begin() {
     setNotice("");
+
     if (!hasCameraConsent()) {
       setConsentOpen(true);
       return;
     }
+
+    // Reset all data from the previous session.
     intervalMs.current = intervalMin * 60000;
     t0.current = Date.now();
     nextBreakAt.current = t0.current + intervalMs.current;
+
     blinkTimes.current = [];
     lastBlinking.current = false;
     lastSignalAt.current = 0;
@@ -206,36 +243,53 @@ export default function ScreenBreakSession() {
     breaks.current = 0;
     skipped.current = 0;
     breakEnd.current = null;
+
     setValidation(null);
     setSnap(EMPTY);
+    setFinal(null);
+    setNotice("");
     setPhase("starting");
+
     try {
       await getProvider().start();
       setPhase("running");
     } catch (err) {
-      console.warn(err);
+      console.warn("[ScreenBreak] Could not start:", err);
+
       setNotice(friendlyError(err));
       setPhase("setup");
     }
   }
 
   async function finish() {
-    const s = measure();
-    setFinal(s);
+    // Capture the final measurements before stopping the provider.
+    const result = measure();
+
+    setFinal(result);
+    save(result);
+
     try {
       await provider.current?.stop();
-    } catch {
-      // already stopped
+    } catch (err) {
+      console.warn("[ScreenBreak] Stop warning:", err);
     }
-    save(s);
+
+    stream.current = null;
     setPhase("summary");
   }
 
   function save(s: Snap) {
     if (s.elapsed < 10) return;
-    const avg = (s.total * 60) / s.elapsed;
+
+    const average = (s.total * 60) / s.elapsed;
+
     try {
-      const old = JSON.parse(localStorage.getItem("humankit-sessions") || "[]");
+      const stored = JSON.parse(
+        localStorage.getItem("humankit-sessions") || "[]",
+      );
+
+      const old = Array.isArray(stored) ? stored : [];
+
       const entry = {
         id: Date.now(),
         tool: "ScreenBreak",
@@ -243,15 +297,16 @@ export default function ScreenBreakSession() {
         duration: Math.floor(s.elapsed),
         measurement:
           s.signalOk || s.total > 0
-            ? `${s.total} blinks · about ${avg.toFixed(0)}/min · ${s.breaks} breaks`
+            ? `${s.total} blinks · about ${average.toFixed(0)}/min · ${s.breaks} breaks`
             : `${s.breaks} breaks (no blink readings)`,
       };
+
       localStorage.setItem(
         "humankit-sessions",
         JSON.stringify([entry, ...old]),
       );
     } catch (err) {
-      console.warn(err);
+      console.warn("[ScreenBreak] Could not save session:", err);
     }
   }
 
@@ -267,14 +322,33 @@ export default function ScreenBreakSession() {
     setSnap(measure());
   }
 
-  // ---- what to tell the person right now ----
-  let nudge = "";
-  if (phase === "running" && !snap.onBreak && snap.signalOk) {
-    if (snap.gapNow >= LONG_GAP)
-      nudge = "You have been staring for a while. Blink slowly a few times.";
-    else if (snap.rate !== null && snap.rate < LOW_RATE)
-      nudge = "Your blinking is slow right now. Try a few full, gentle blinks.";
+  // Prepare the screen for another completely fresh session.
+  function newSession() {
+    setFinal(null);
+    setSnap(EMPTY);
+    setValidation(null);
+    setNotice("");
+    setPhase("setup");
   }
+
+  let nudge = "";
+
+  if (phase === "running" && !snap.onBreak && snap.signalOk) {
+    if (snap.gapNow >= LONG_GAP) {
+      nudge = "You have been staring for a while. Blink slowly a few times.";
+    } else if (snap.rate !== null && snap.rate < LOW_RATE) {
+      nudge = "Your blinking is slow right now. Try a few full, gentle blinks.";
+    }
+  }
+
+  // Avoid telling users that their face disappeared merely because
+  // a blink update hasn't arrived recently.
+  const blinkStatus =
+    validation?.code === 1
+      ? "face not detected"
+      : snap.signalOk
+        ? "receiving blink updates"
+        : "waiting for blink updates";
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -293,7 +367,9 @@ export default function ScreenBreakSession() {
           >
             <Eye size={13} /> Eye comfort
           </div>
+
           <h1 className="text-3xl font-bold tracking-[-.03em]">ScreenBreak</h1>
+
           <p className="mt-2 text-[#718096]">
             Counts your blinks while you work and reminds you to rest your eyes.
           </p>
@@ -301,15 +377,19 @@ export default function ScreenBreakSession() {
       </div>
 
       {notice && (
-        <p className="mt-5 rounded-xl bg-[#fff6e5] p-3 text-sm text-[#8a5a12]">
+        <p
+          className="mt-5 rounded-xl bg-[#fff6e5] p-3 text-sm text-[#8a5a12]"
+          role="alert"
+        >
           {notice}
         </p>
       )}
 
-      {/* ---------- SETUP ---------- */}
+      {/* SETUP */}
       {(phase === "setup" || phase === "starting") && (
         <section className="mt-8 max-w-xl rounded-2xl border border-[#e7e8f0] bg-white p-6">
           <h2 className="font-semibold">How it works</h2>
+
           <ul className="mt-3 space-y-2 text-sm leading-6 text-[#718096]">
             <li>
               Put the app next to your work. Your camera counts your blinks.
@@ -327,23 +407,32 @@ export default function ScreenBreakSession() {
           <p className="mt-6 text-sm font-semibold">
             Remind me to take a break every
           </p>
+
           <div className="mt-2 flex flex-wrap gap-2">
             {[
               { m: 20, label: "20 minutes" },
               { m: 30, label: "30 minutes" },
               { m: 1, label: "1 minute (test)" },
-            ].map((o) => (
+            ].map((option) => (
               <button
-                key={o.m}
-                onClick={() => setIntervalMin(o.m)}
-                className="rounded-xl border px-4 py-2 text-sm font-medium"
+                key={option.m}
+                onClick={() => setIntervalMin(option.m)}
+                disabled={phase === "starting"}
+                className="rounded-xl border px-4 py-2 text-sm font-medium disabled:opacity-50"
                 style={
-                  intervalMin === o.m
-                    ? { background: SOFT, borderColor: ACCENT, color: ACCENT }
-                    : { borderColor: "#e7e8f0", color: "#718096" }
+                  intervalMin === option.m
+                    ? {
+                        background: SOFT,
+                        borderColor: ACCENT,
+                        color: ACCENT,
+                      }
+                    : {
+                        borderColor: "#e7e8f0",
+                        color: "#718096",
+                      }
                 }
               >
-                {o.label}
+                {option.label}
               </button>
             ))}
           </div>
@@ -360,7 +449,7 @@ export default function ScreenBreakSession() {
         </section>
       )}
 
-      {/* ---------- RUNNING ---------- */}
+      {/* RUNNING */}
       {phase === "running" && (
         <div className="mt-8 grid gap-5 lg:grid-cols-[1fr_1.4fr]">
           <section className="rounded-2xl border border-[#e7e8f0] bg-white p-5">
@@ -372,18 +461,25 @@ export default function ScreenBreakSession() {
                 className="aspect-video w-full -scale-x-100 object-cover"
               />
             </div>
+
             <p className="mt-3 text-sm text-[#718096]">
-              {validation ? describeValidation(validation.code) : "Starting..."}
+              {validation
+                ? describeValidation(validation.code)
+                : "Starting camera measurement..."}
             </p>
+
             <p className="mt-1 text-xs text-[#8992a6]">
               Blink signal:{" "}
               <span
                 className="font-semibold"
-                style={{ color: snap.signalOk ? ACCENT : "#c86b6b" }}
+                style={{
+                  color: snap.signalOk ? ACCENT : "#c86b6b",
+                }}
               >
-                {snap.signalOk ? "working" : "waiting for your face"}
+                {blinkStatus}
               </span>
             </p>
+
             <div className="mt-5 flex items-center justify-between">
               <div>
                 <p className="text-xs uppercase tracking-wider text-[#8992a6]">
@@ -393,6 +489,7 @@ export default function ScreenBreakSession() {
                   {fmt(snap.elapsed)}
                 </p>
               </div>
+
               <button
                 onClick={finish}
                 className="flex items-center gap-2 rounded-xl border border-[#efcaca] px-4 py-2.5 text-sm font-semibold text-[#c86b6b]"
@@ -412,6 +509,7 @@ export default function ScreenBreakSession() {
                 {nudge}
               </p>
             )}
+
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
               <Stat
                 label="Blinks / min"
@@ -424,12 +522,15 @@ export default function ScreenBreakSession() {
               />
               <Stat label="Next break in" value={fmt(snap.nextIn)} />
             </div>
+
             <RateChart
               series={snap.series}
               duration={Math.max(snap.elapsed, 60)}
             />
+
             <div className="flex flex-wrap items-center gap-3 text-sm text-[#718096]">
               <span>Breaks taken: {snap.breaks}</span>
+
               <button
                 onClick={breakNow}
                 className="rounded-lg bg-[#f3f3f7] px-3 py-1.5 text-xs font-semibold text-[#3d4660]"
@@ -441,7 +542,7 @@ export default function ScreenBreakSession() {
         </div>
       )}
 
-      {/* ---------- BREAK POPUP ---------- */}
+      {/* BREAK POPUP */}
       {phase === "running" && snap.onBreak && (
         <div
           className="fixed inset-0 z-40 grid place-items-center bg-[#20283d]/80 p-4"
@@ -456,17 +557,21 @@ export default function ScreenBreakSession() {
             >
               <Coffee size={22} />
             </div>
+
             <h2 className="mt-4 text-xl font-bold">Rest your eyes</h2>
+
             <p className="mt-2 text-sm leading-6 text-[#718096]">
               Look at something far away, like out of a window. Blink slowly
               while you wait.
             </p>
+
             <p
               className="mt-5 font-mono text-5xl font-semibold"
               style={{ color: ACCENT }}
             >
               {Math.ceil(snap.breakLeft)}
             </p>
+
             <button
               onClick={skipBreak}
               className="mt-6 text-xs font-medium text-[#8992a6] underline"
@@ -477,9 +582,9 @@ export default function ScreenBreakSession() {
         </div>
       )}
 
-      {/* ---------- SUMMARY ---------- */}
+      {/* SUMMARY */}
       {phase === "summary" && final && (
-        <Summary s={final} onAgain={() => setPhase("setup")} />
+        <Summary s={final} onAgain={newSession} />
       )}
 
       {consentOpen && (
@@ -507,7 +612,6 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-// Line chart of blinks per minute. The dashed line marks "slow blinking".
 function RateChart({
   series,
   duration,
@@ -518,12 +622,15 @@ function RateChart({
   const W = 600;
   const H = 150;
   const PAD = 8;
-  const hi = Math.max(25, ...series.map((p) => p.v + 2));
+
+  const hi = Math.max(25, ...series.map((point) => point.v + 2));
   const x = (t: number) => PAD + (t / duration) * (W - 2 * PAD);
   const y = (v: number) => H - PAD - (v / hi) * (H - 2 * PAD);
+
   return (
     <div className="rounded-2xl border border-[#e7e8f0] bg-white p-5">
       <h3 className="text-sm font-semibold">Blinks per minute</h3>
+
       {series.length < 2 ? (
         <p className="mt-4 flex h-27.5 items-center justify-center rounded-lg bg-[#fafafd] text-xs text-[#8992a6]">
           Collecting your first minute of blinks...
@@ -543,16 +650,20 @@ function RateChart({
             stroke="#9aa2b3"
             strokeDasharray="5 5"
           />
+
           <polyline
             fill="none"
             stroke={ACCENT}
             strokeWidth={2.5}
             strokeLinejoin="round"
             strokeLinecap="round"
-            points={series.map((p) => `${x(p.t)},${y(p.v)}`).join(" ")}
+            points={series
+              .map((point) => `${x(point.t)},${y(point.v)}`)
+              .join(" ")}
           />
         </svg>
       )}
+
       <p className="mt-2 text-[11px] text-[#8992a6]">
         Dashed line = {LOW_RATE} blinks a minute. Below it, your blinking is
         slow.
@@ -564,36 +675,44 @@ function RateChart({
 function Summary({ s, onAgain }: { s: Snap; onAgain: () => void }) {
   const hasData = s.total > 0 || s.series.length > 0;
   const avg = s.elapsed > 0 ? (s.total * 60) / s.elapsed : 0;
+
   const tips: string[] = [];
+
   if (hasData) {
-    if (avg < LOW_RATE)
+    if (avg < LOW_RATE) {
       tips.push(
         "You blinked slowly for much of this session. Try to blink fully and often when you are focused.",
       );
-    else if (avg < 14)
+    } else if (avg < 14) {
       tips.push(
         "Your blinking was a bit slow. Short pauses to look away can help.",
       );
-    else
+    } else {
       tips.push(
         "Your blinking looked healthy for a screen session. Keep it up.",
       );
-    if (s.longestGap >= LONG_GAP)
+    }
+
+    if (s.longestGap >= LONG_GAP) {
       tips.push(
         `Your longest stare was about ${s.longestGap.toFixed(0)} seconds. Look away from the screen a little more often.`,
       );
+    }
   } else {
     tips.push(
       "We could not see your blinks this time. Sit in front of a light and face the camera, then try again.",
     );
   }
-  if (s.elapsed >= 20 * 60 && s.breaks === 0)
+
+  if (s.elapsed >= 20 * 60 && s.breaks === 0) {
     tips.push("You did not take any breaks. Try the 20-20-20 habit next time.");
+  }
 
   return (
     <section className="mt-8 max-w-3xl space-y-5">
       <div className="rounded-2xl border border-[#e7e8f0] bg-white p-6">
         <h2 className="text-lg font-bold">Session summary</h2>
+
         <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
           <Stat label="Time" value={fmt(s.elapsed)} />
           <Stat label="Total blinks" value={String(s.total)} />
@@ -603,17 +722,21 @@ function Summary({ s, onAgain }: { s: Snap; onAgain: () => void }) {
             value={`${s.breaks}${s.skipped ? ` (+${s.skipped} skipped)` : ""}`}
           />
         </div>
+
         <ul className="mt-5 list-disc space-y-1 pl-5 text-sm leading-6 text-[#3d4660]">
-          {tips.map((t) => (
-            <li key={t}>{t}</li>
+          {tips.map((tip) => (
+            <li key={tip}>{tip}</li>
           ))}
         </ul>
+
         <p className="mt-4 text-xs text-[#8992a6]">
           Blink counts are an estimate from the camera. They are not a medical
           measurement. Saved on this computer only.
         </p>
       </div>
+
       <RateChart series={s.series} duration={Math.max(s.elapsed, 60)} />
+
       <div className="flex gap-3">
         <button
           onClick={onAgain}
@@ -622,6 +745,7 @@ function Summary({ s, onAgain }: { s: Snap; onAgain: () => void }) {
         >
           New session
         </button>
+
         <Link
           href="/history"
           className="rounded-xl bg-[#f3f3f7] px-5 py-3 text-sm font-semibold text-[#3d4660]"
